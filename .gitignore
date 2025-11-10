@@ -1,0 +1,216 @@
+# VLP2SS - The VLP to ScreenSteps Converter
+# .gitignore file
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+
+# IDE and Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.hypothesis/
+.pytest_cache/
+*.mo
+*.pot
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# Go
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+vlp2ss
+vlp2ss-*
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Compiled Object files, Static and Dynamic libs
+*.o
+*.a
+
+# Folders
+_obj
+_test
+
+# Architecture specific extensions/prefixes
+*.[568vq]
+[568vq].out
+
+# cgo generated files
+_cgo_guts.c
+_cgo_export.*
+
+# Bash
+*.bak
+*.backup
+
+# Project Specific
+# Temporary directories
+temp/
+tmp/
+.tmp/
+
+# Output directories
+output/
+out/
+
+# Log files
+logs/
+*.log
+
+# Converted content
+articles/
+images/
+manifest.json
+
+# API credentials and secrets
+config.env
+.env.local
+.env.*.local
+secrets.yml
+credentials.json
+*.key
+*.pem
+*.crt
+
+# Test files and data
+test_data/
+test_output/
+*.test.zip
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
+# Compressed files (except in test fixtures)
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Documentation build artifacts
+docs/_build/
+docs/.doctrees/
+site/
+
+# Package manager files
+node_modules/
+package-lock.json
+yarn.lock
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Compiled documentation
+*.pdf
+*.epub
+
+# Local configuration
+.local/
+local/
+config.local.*
+
+# Editor backup files
+*~
+\#*\#
+.#*
+
+# Ansible
+*.retry
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Keep these directories but ignore their contents
+python/output/.gitkeep
+bash/output/.gitkeep
+golang/output/.gitkeep
+
+# Keep example files
+!examples/*.zip
+!test/fixtures/*.zip
+
+# Keep documentation images
+!docs/images/*.png
+!docs/images/*.jpg
+!docs/images/*.gif
