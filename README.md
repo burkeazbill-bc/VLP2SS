@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/) [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://golang.org/) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Version:** 1.0  
+**Version:** 1.0.1  
 **Author:** Burke Azbill  
 **License:** MIT
 

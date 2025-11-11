@@ -2,7 +2,7 @@
 
 A high-performance Go implementation of the VLP to ScreenSteps converter with API upload support.
 
-**Version:** 1.0  
+**Version:** 1.0.1  
 **Author:** Burke Azbill  
 **License:** MIT
 

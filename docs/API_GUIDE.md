@@ -2,7 +2,7 @@
 
 This guide provides detailed information about integrating with the ScreenSteps API for uploading converted VLP content.
 
-**Version:** 1.0  
+**Version:** 1.0.1  
 **Author:** Burke Azbill  
 **License:** MIT
 

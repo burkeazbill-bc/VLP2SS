@@ -2,7 +2,7 @@
 
 This guide provides detailed installation instructions for VLP2SS - The VLP to ScreenSteps Converter.
 
-**Version:** 1.0  
+**Version:** 1.0.1  
 **Author:** Burke Azbill  
 **License:** MIT
 
