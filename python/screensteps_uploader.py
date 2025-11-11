@@ -4,7 +4,7 @@ ScreenSteps API Uploader
 Uploads converted VLP content to ScreenSteps via API
 
 Author: Burke Azbill
-Version: 1.0.0
+Version: 1.0.1
 """
 
 import sys
@@ -58,7 +58,8 @@ def extract_images_from_html(html_content):
     for img in soup.find_all('img'):
         src = img.get('src', '')
         if src:
-            filename = src.split('/')[-1]
+            # Extract filename and remove query parameters (e.g., '?X-Amz-Algorithm=...')
+            filename = src.split('/')[-1].split('?')[0]
             images.append({
                 'src': src,
                 'filename': filename,
@@ -75,6 +76,45 @@ def remove_images_from_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     for img in soup.find_all('img'):
         img.decompose()
+    return str(soup)
+
+def extract_youtube_embeds(html_content):
+    """Extract YouTube embed divs from HTML and return list of video IDs"""
+    if not html_content:
+        return []
+    
+    soup = BeautifulSoup(html_content, 'html.parser')
+    youtube_embeds = []
+    
+    # Find all YouTube embed divs
+    youtube_divs = soup.find_all('div', class_='html-embed')
+    
+    for div in youtube_divs:
+        # Look for iframe with YouTube embed URL
+        iframe = div.find('iframe')
+        if iframe:
+            src = iframe.get('src', '')
+            # Extract video ID from YouTube embed URL
+            # Format: https://www.youtube.com/embed/VIDEO_ID
+            match = re.search(r'youtube\.com/embed/([^/?]+)', src)
+            if match:
+                video_id = match.group(1)
+                youtube_embeds.append({
+                    'video_id': video_id,
+                    'html': str(div)
+                })
+    
+    return youtube_embeds
+
+def remove_youtube_embeds_from_html(html_content):
+    """Remove YouTube embed divs from HTML"""
+    if not html_content:
+        return ""
+    
+    soup = BeautifulSoup(html_content, 'html.parser')
+    # Remove html-embed divs (YouTube embeds)
+    for div in soup.find_all('div', class_='html-embed'):
+        div.decompose()
     return str(soup)
 
 def detect_style_from_html(html_content):
@@ -155,9 +195,8 @@ class ScreenStepsAPI:
                     self.logger.info("=" * 70)
                 
                 if response.status_code == 200 or response.status_code == 201:
-                    # Add 1.25 second delay between successful API calls to avoid rate limiting
-                    # ScreenSteps rate limit: 8 files per 10 seconds for image uploads
-                    time.sleep(1.25)
+                    # Add delay between successful API calls to avoid rate limiting
+                    time.sleep(0.25)
                     return response
                 elif response.status_code == 429:
                     # Rate limit exceeded - check for retry_in value
@@ -165,13 +204,10 @@ class ScreenStepsAPI:
                         retry_info = response.json()
                         retry_in = retry_info.get('retry_in', 60)
                         self.logger.warning(f"Rate limit exceeded. Retrying in {retry_in} seconds...")
-                        time.sleep(retry_in)
-                        # Add additional 1.25 second delay after retry_in
-                        time.sleep(1.25)
+                        time.sleep(retry_in)                    
                     except ValueError:
                         self.logger.warning("Rate limit exceeded. Retrying in 60 seconds...")
                         time.sleep(60)
-                        time.sleep(1.25)
                 else:
                     self.logger.error("=" * 70)
                     self.logger.error("API REQUEST FAILED:")
@@ -259,7 +295,7 @@ class ScreenStepsAPI:
         Reference: https://help.screensteps.com/a/1540764-creating-images-or-file-attachments-via-the-public-api
         
         Equivalent curl command:
-        curl -X POST -u user:token https://{account}.screenstepslive.com/api/v2/sites/{site_id}/files \
+        curl -X POST -u user:token https://account_name.screenstepslive.com/api/v2/sites/site_id/files \
              -H "Accept: application/json" \
              -F "type=ImageAsset" \
              -F "file=@image.png"
@@ -275,7 +311,7 @@ class ScreenStepsAPI:
             response = self._request('POST', f'sites/{site_id}/files', 
                                     files=files)
             
-            # Add 1.25 second delay after successful upload
+            # Add delay after successful upload
             # ScreenSteps rate limit: 8 files per 10 seconds for image uploads
             time.sleep(1.25)
             return response.json()
@@ -333,6 +369,9 @@ class ScreenStepsAPI:
             html_content = step.get('content', '')
             images = extract_images_from_html(html_content)
             
+            # Extract YouTube embeds
+            youtube_embeds = extract_youtube_embeds(html_content)
+            
             for img_data in images:
                 # Find image file in article-specific directory
                 image_path = article_images_dir / img_data['filename']
@@ -384,7 +423,7 @@ class ScreenStepsAPI:
                             skipped_images.append({
                                 'image_path': str(image_path),
                                 'chapter_title': chapter_title,
-                                'article_title': article.get('title', 'Unknown'),
+                                'article_title': article_data.get('title', 'Unknown'),
                                 'step_title': step.get('title', 'Unknown')
                             })
                             
@@ -410,7 +449,7 @@ class ScreenStepsAPI:
                         skipped_images.append({
                             'image_path': str(image_path),
                             'chapter_title': chapter_title,
-                            'article_title': article.get('title', 'Unknown'),
+                            'article_title': article_data.get('title', 'Unknown'),
                             'step_title': step.get('title', 'Unknown')
                         })
                         
@@ -432,11 +471,11 @@ class ScreenStepsAPI:
                         sort_order += 1
                 else:
                     # Image not found - add placeholder
-                    self.warning(f"Image not found, skipping: {image_path} (Referenced in: {chapter_title} → article: {article.get('title', 'Unknown')} → step: {step.get('title', 'Unknown')})")
+                    self.logger.warning(f"Image not found, skipping: {image_path} (Referenced in: {chapter_title} → article: {article_data.get('title', 'Unknown')} → step: {step.get('title', 'Unknown')})")
                     skipped_images.append({
                         'image_path': str(image_path),
                         'chapter_title': chapter_title,
-                        'article_title': article.get('title', 'Unknown'),
+                        'article_title': article_data.get('title', 'Unknown'),
                         'step_title': step.get('title', 'Unknown')
                     })
                     
@@ -457,8 +496,25 @@ class ScreenStepsAPI:
                     step_block['content_block_ids'].append(placeholder_uuid)
                     sort_order += 1
             
-            # Remove images from HTML and detect style
+            # Process YouTube embeds - create separate html-embed content blocks
+            for youtube_embed in youtube_embeds:
+                embed_uuid = generate_uuid()
+                embed_block = {
+                    'uuid': embed_uuid,
+                    'type': 'TextContent',
+                    'body': youtube_embed['html'],
+                    'depth': 1,
+                    'sort_order': sort_order,
+                    'style': 'html-embed',
+                    'show_copy_clipboard': False
+                }
+                content_blocks.append(embed_block)
+                step_block['content_block_ids'].append(embed_uuid)
+                sort_order += 1
+            
+            # Remove images and YouTube embeds from HTML and detect style
             text_html = remove_images_from_html(html_content)
+            text_html = remove_youtube_embeds_from_html(text_html)
             style = detect_style_from_html(text_html)
             text_html = remove_style_divs(text_html)
             
@@ -904,7 +960,7 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Enable verbose logging')
     parser.add_argument('--version', action='version',
-                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0\nAuthor: Burke Azbill\nLicense: MIT')
+                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0.1\nAuthor: Burke Azbill\nLicense: MIT')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
     

@@ -153,7 +153,7 @@ For detailed installation instructions, see [INSTALLATION.md](docs/INSTALLATION.
     -v
 ```
 
-### Example 4: Batch Processing
+### Example 3: Batch Processing
 
 ```bash
 for file in *.zip; do
@@ -163,7 +163,7 @@ for file in *.zip; do
 done
 ```
 
-### Example 6: Go Implementation
+### Example 4: Go Implementation
 
 ```bash
 cd golang
@@ -274,7 +274,9 @@ For more troubleshooting help, see the [Complete User Guide](docs/README.md#trou
 
 Successfully tested with sample VLP exports:
 
-- ✅ All images copied and organized
+- ✅ Almost all images copied and organized
+- ✅ Strong text maintained
+- ✅ Embedded Youtube Videos maintained
 - ✅ JSON and HTML files generated correctly
 - ✅ Comprehensive logs created
 
@@ -315,7 +317,14 @@ Upload times depend on:
 - Network speed
 - API rate limits (no more than 8 image uploads within 10 seconds)
 
-Typical: 1-2 seconds per article + images
+Actual Example Timing:
+
+| Articles | Images | Conversion time |Import Time |
+|:---------:|:--------:|:----------:|:-----:|
+| **36** | 472 | 1s | 17m 58s  |
+| **21** | 107 | 0s | 4m 17s  |
+| **25** | 132 | 0s | 5m 13s  |
+| **34** | 133 | 0s | 6m 9s  |
 
 ## 🤝 Contributing
 
@@ -328,6 +337,10 @@ Areas for improvement:
 - Docker container
 
 ## 📞 Support
+
+### Known Issues
+
+- Not all ScreenSteps accounts are enabled for image/file upload
 
 ### Getting Help
 
@@ -365,6 +378,10 @@ All dependencies are used in compliance with their respective licenses.
 
 ## 📝 Version History
 
+- **v1.0.1** (2025-11-11)
+  - Fix double encoded xml export translation
+  - Fix Youtube embedded videos
+  
 - **v1.0** (2025-11-07)
   - Initial release
   - Python and Go implementations

@@ -4,7 +4,7 @@ VLP to ScreenSteps Converter
 Converts VMware Lab Platform (VLP) exported content to ScreenSteps format
 
 Author: Burke Azbill
-Version: 1.0.0
+Version: 1.0.1
 """
 
 import sys
@@ -139,7 +139,8 @@ def extract_images_from_html(html_content):
         src = img.get('src', '')
         if src:
             # Extract filename from path like './images/filename.png'
-            filename = src.split('/')[-1]
+            # Remove query parameters (e.g., '?X-Amz-Algorithm=...')
+            filename = src.split('/')[-1].split('?')[0]
             images.append({
                 'src': src,
                 'filename': filename,
@@ -313,7 +314,7 @@ class VLPParser:
                                 'id': step_node['id'],
                                 'title': step_node['title'],
                                 'order': step_node['order'],
-                                'content': step_node['content'],
+                                'content': self._clean_html(step_node['content']),
                                 'images': step_node.get('images', [])
                             }
                             article['steps'].append(step)
@@ -323,7 +324,7 @@ class VLPParser:
                             'id': article_node['id'],
                             'title': article_node['title'],
                             'order': 0,
-                            'content': article_node['content'],
+                            'content': self._clean_html(article_node['content']),
                             'images': article_node.get('images', [])
                         }
                         article['steps'].append(step)
@@ -351,17 +352,126 @@ class VLPParser:
         }
     
     def _clean_html(self, html: str) -> str:
-        """Clean and normalize HTML content"""
+        """Clean and normalize HTML content with proper formatting preservation"""
         if not html:
             return ""
         
-        # Unescape HTML entities
+        # First unescape HTML entities (may need multiple passes for double-encoding)
         html = unescape(html)
+        # Second pass to handle double-encoded entities like &amp;gt; -> &gt; -> >
+        html = unescape(html)
+        
+        # Parse and convert VLP-specific formatting to standard HTML
+        html = self._convert_vlp_formatting(html)
         
         # Fix image paths - remove ./ prefix
         html = re.sub(r'src=["\']\./', 'src="', html)
         
         return html.strip()
+    
+    def _convert_vlp_formatting(self, html: str) -> str:
+        """Convert VLP-specific span classes to proper HTML formatting tags"""
+        if not html:
+            return ""
+        
+        try:
+            # Use BeautifulSoup to parse and transform the HTML
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Convert YouTube embeds first (before other transformations)
+            self._convert_youtube_embeds(soup)
+            
+            # Map of VLP CSS classes to HTML tags
+            # c5 is commonly used for bold/strong text in VLP exports
+            class_to_tag_map = {
+                'c5': 'strong',
+                'c3': 'strong',
+                'c4': 'em',
+                'c6': 'code',
+                'c7': 'u',
+            }
+            
+            # Find all span elements with class attributes
+            for span in soup.find_all('span', class_=True):
+                classes = span.get('class', [])
+                if not classes:
+                    continue
+                
+                # Check if any class matches our mapping
+                replacement_tag = None
+                for cls in classes:
+                    if cls in class_to_tag_map:
+                        replacement_tag = class_to_tag_map[cls]
+                        break
+                
+                if replacement_tag:
+                    # Create new tag with the same content
+                    new_tag = soup.new_tag(replacement_tag)
+                    # Preserve the inner content (including nested tags and text)
+                    new_tag.extend(span.contents)
+                    # Replace the span with the new tag
+                    span.replace_with(new_tag)
+                else:
+                    # If no mapping found, unwrap the span but keep its content
+                    # This handles spans like <span class="c0"> that are just containers
+                    if span.string:
+                        span.unwrap()
+            
+            # Convert back to string
+            result = str(soup)
+            
+            # Clean up any remaining empty spans
+            result = re.sub(r'<span[^>]*>\s*</span>', '', result)
+            
+            return result
+            
+        except Exception as e:
+            # If parsing fails, return original HTML
+            self.logger.warning(f"Failed to parse HTML for formatting conversion: {e}")
+            return html
+    
+    def _convert_youtube_embeds(self, soup: BeautifulSoup) -> None:
+        """Convert VLP YouTube embed divs to ScreenSteps iframe format"""
+        # Find all YouTube embed divs
+        youtube_divs = soup.find_all('div', class_='mediatag-thumb youtube-thumb')
+        
+        for youtube_div in youtube_divs:
+            # Extract the YouTube video ID from data-media-id attribute
+            video_id = youtube_div.get('data-media-id')
+            
+            if not video_id:
+                # Try to extract from data-thumb-url as fallback
+                thumb_url = youtube_div.get('data-thumb-url', '')
+                match = re.search(r'youtube\.com/vi/([^/]+)/', thumb_url)
+                if match:
+                    video_id = match.group(1)
+            
+            if video_id:
+                # Create the ScreenSteps-compatible HTML embed structure
+                # Outer div with html-embed class (no tabindex, no wrapper div)
+                outer_div = soup.new_tag('div', **{'class': 'html-embed'})
+                
+                # Create the iframe directly inside html-embed div
+                iframe = soup.new_tag('iframe', **{
+                    'width': '560',
+                    'height': '315',
+                    'src': f'https://www.youtube.com/embed/{video_id}',
+                    'title': 'YouTube video player',
+                    'frameborder': '0',
+                    'allow': 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+                    'referrerpolicy': 'strict-origin-when-cross-origin',
+                    'allowfullscreen': ''
+                })
+                
+                # Assemble the structure
+                outer_div.append(iframe)
+                
+                # Replace the VLP YouTube div with the ScreenSteps format
+                youtube_div.replace_with(outer_div)
+                
+                self.logger.substep(f"Converted YouTube embed: {video_id}")
+            else:
+                self.logger.warning("Found YouTube embed div but could not extract video ID")
     
     def _extract_description(self, html: str, max_length: int = 200) -> str:
         """Extract plain text description from HTML"""
@@ -672,7 +782,7 @@ def main():
     parser.add_argument('--no-cleanup', action='store_true',
                        help='Keep temporary files after conversion')
     parser.add_argument('--version', action='version',
-                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0\nAuthor: Burke Azbill\nLicense: MIT')
+                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0.1\nAuthor: Burke Azbill\nLicense: MIT')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
     

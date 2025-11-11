@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -937,7 +938,7 @@ func (c *Converter) flattenStructure(manual *Manual) []SSChapter {
 							ID:      stepNode.ID,
 							Title:   stepNode.Title,
 							Order:   stepNode.OrderIndex,
-							Content: c.getNodeContent(&stepNode),
+							Content: c.cleanHTML(c.getNodeContent(&stepNode)),
 							Images:  c.getNodeImages(&stepNode),
 						}
 						article.Steps = append(article.Steps, step)
@@ -948,7 +949,7 @@ func (c *Converter) flattenStructure(manual *Manual) []SSChapter {
 						ID:      articleNode.ID,
 						Title:   articleNode.Title,
 						Order:   0,
-						Content: c.getNodeContent(&articleNode),
+						Content: c.cleanHTML(c.getNodeContent(&articleNode)),
 						Images:  c.getNodeImages(&articleNode),
 					}
 					article.Steps = append(article.Steps, step)
@@ -983,14 +984,125 @@ func (c *Converter) cleanHTML(htmlContent string) string {
 		return ""
 	}
 
-	// Unescape HTML entities
+	// First unescape HTML entities (may need multiple passes for double-encoding)
 	htmlContent = html.UnescapeString(htmlContent)
+	// Second pass to handle double-encoded entities like &amp;gt; -> &gt; -> >
+	htmlContent = html.UnescapeString(htmlContent)
+
+	// Convert VLP-specific formatting to standard HTML
+	htmlContent = c.convertVLPFormatting(htmlContent)
 
 	// Fix image paths
 	re := regexp.MustCompile(`src=["']\.\/`)
 	htmlContent = re.ReplaceAllString(htmlContent, `src="`)
 
 	return strings.TrimSpace(htmlContent)
+}
+
+func (c *Converter) convertVLPFormatting(htmlContent string) string {
+	if htmlContent == "" {
+		return ""
+	}
+
+	// Convert YouTube embeds first (before other transformations)
+	htmlContent = c.convertYouTubeEmbeds(htmlContent)
+
+	// Map of VLP CSS classes to HTML tags
+	// c5 is commonly used for bold/strong text in VLP exports
+	classToTagMap := map[string]string{
+		"c5": "strong",
+		"c3": "strong",
+		"c4": "em",
+		"c6": "code",
+		"c7": "u",
+	}
+
+	// Convert <span class="c5">text</span> to <strong>text</strong>
+	for class, tag := range classToTagMap {
+		// Pattern to match <span class="cX">content</span> including nested tags
+		// We use a non-greedy match to handle nested spans correctly
+		pattern := fmt.Sprintf(`<span class="%s">(.*?)</span>`, class)
+		re := regexp.MustCompile(pattern)
+		replacement := fmt.Sprintf("<%s>$1</%s>", tag, tag)
+		htmlContent = re.ReplaceAllString(htmlContent, replacement)
+
+		// Also handle spans with multiple classes like class="c1 c5"
+		pattern = fmt.Sprintf(`<span[^>]*class="[^"]*\b%s\b[^"]*"[^>]*>(.*?)</span>`, class)
+		re = regexp.MustCompile(pattern)
+		htmlContent = re.ReplaceAllString(htmlContent, replacement)
+	}
+
+	// Remove empty spans and spans with only whitespace classes (like c0, c1, c2)
+	// These are typically just container spans without semantic meaning
+	emptySpanPattern := regexp.MustCompile(`<span class="c[012]">(.*?)</span>`)
+	htmlContent = emptySpanPattern.ReplaceAllString(htmlContent, "$1")
+
+	// Clean up any remaining empty spans
+	emptySpanPattern = regexp.MustCompile(`<span[^>]*>\s*</span>`)
+	htmlContent = emptySpanPattern.ReplaceAllString(htmlContent, "")
+
+	return htmlContent
+}
+
+func (c *Converter) convertYouTubeEmbeds(htmlContent string) string {
+	// Pattern to match VLP YouTube embed divs
+	// Example: <div class="mediatag-thumb youtube-thumb" ... data-media-id="naK5opxyKWA" ...>
+	youtubePattern := regexp.MustCompile(`<div[^>]*class="[^"]*mediatag-thumb youtube-thumb[^"]*"[^>]*data-media-id="([^"]+)"[^>]*>.*?</div>`)
+
+	// Find all matches
+	matches := youtubePattern.FindAllStringSubmatch(htmlContent, -1)
+
+	for _, match := range matches {
+		if len(match) >= 2 {
+			fullMatch := match[0]
+			videoID := match[1]
+
+			// Create ScreenSteps-compatible HTML embed structure
+			// Format: <div class="html-embed"><iframe width="560" height="315" ...></iframe></div>
+			screenStepsEmbed := fmt.Sprintf(
+				`<div class="html-embed">`+
+					`<iframe width="560" height="315" src="https://www.youtube.com/embed/%s" title="YouTube video player" frameborder="0" `+
+					`allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" `+
+					`referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>`,
+				videoID,
+			)
+
+			// Replace the VLP YouTube div with ScreenSteps format
+			htmlContent = strings.Replace(htmlContent, fullMatch, screenStepsEmbed, 1)
+
+			c.logger.Substep(fmt.Sprintf("Converted YouTube embed: %s", videoID))
+		}
+	}
+
+	// Fallback: Try to extract video ID from data-thumb-url if data-media-id is not found
+	thumbUrlPattern := regexp.MustCompile(`<div[^>]*class="[^"]*mediatag-thumb youtube-thumb[^"]*"[^>]*data-thumb-url="[^"]*youtube\.com/vi/([^/]+)/[^"]*"[^>]*>.*?</div>`)
+	thumbMatches := thumbUrlPattern.FindAllStringSubmatch(htmlContent, -1)
+
+	for _, match := range thumbMatches {
+		if len(match) >= 2 {
+			fullMatch := match[0]
+			videoID := match[1]
+
+			// Only process if not already converted
+			if strings.Contains(fullMatch, "mediatag-thumb") {
+				// Create ScreenSteps-compatible HTML embed structure
+				// Format: <div class="html-embed"><iframe width="560" height="315" ...></iframe></div>
+				screenStepsEmbed := fmt.Sprintf(
+					`<div class="html-embed">`+
+						`<iframe width="560" height="315" src="https://www.youtube.com/embed/%s" title="YouTube video player" frameborder="0" `+
+						`allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" `+
+						`referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>`,
+					videoID,
+				)
+
+				htmlContent = strings.Replace(htmlContent, fullMatch, screenStepsEmbed, 1)
+
+				c.logger.Substep(fmt.Sprintf("Converted YouTube embed (from thumb URL): %s", videoID))
+			}
+		}
+	}
+
+	return htmlContent
 }
 
 func (c *Converter) extractDescription(htmlContent string, maxLength int) string {
@@ -1239,15 +1351,42 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 				contentBlocks = append(contentBlocks, stepBlock)
 				sortOrder++
 
-				// Extract and upload images
+				// Process images
 				images := extractImagesFromHTML(step.Content)
+				articleImagesDir := filepath.Join(filepath.Dir(chapter.Path), "images", article.ID)
+
+				// Extract and process YouTube embeds first
+				youtubeEmbeds := extractYouTubeEmbeds(step.Content)
+				for _, embedHTML := range youtubeEmbeds {
+					embedUUID := generateUUID()
+					embedBlock := map[string]interface{}{
+						"uuid":                embedUUID,
+						"type":                "TextContent",
+						"body":                embedHTML,
+						"depth":               1,
+						"sort_order":          sortOrder,
+						"style":               "html-embed",
+						"show_copy_clipboard": false,
+					}
+					contentBlocks = append(contentBlocks, embedBlock)
+					stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), embedUUID)
+					sortOrder++
+				}
+
+				// Remove YouTube embeds from the main content before processing text and images
+				step.Content = removeYouTubeEmbedsFromHTML(step.Content)
+
 				for _, imgData := range images {
-					imagePath := filepath.Join(imagesDir, imgData["filename"])
+					filename, ok := imgData["filename"]
+					if !ok || filename == "" {
+						continue
+					}
+					imagePath := filepath.Join(imagesDir, filename)
 					if _, err := os.Stat(imagePath); err == nil {
 						// Upload image
 						imageResponse, err := api.UploadImage(siteID, fmt.Sprintf("%d", articleID), imagePath)
 						if err != nil {
-							logger.Warning(fmt.Sprintf("Failed to upload image %s: %v", imgData["filename"], err))
+							logger.Warning(fmt.Sprintf("Failed to upload image %s: %v", filename, err))
 
 							// Track skipped image
 							skippedImages = append(skippedImages, SkippedImage{
@@ -1303,7 +1442,7 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 								imageBlock := map[string]interface{}{
 									"uuid":            imageUUID,
 									"type":            "ImageContentBlock",
-									"asset_file_name": imgData["filename"],
+									"asset_file_name": filename,
 									"image_asset_id":  int(imageAssetID),
 									"width":           width,
 									"height":          height,
@@ -1320,10 +1459,10 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 								}
 								sortOrder++
 
-								logger.Substep(fmt.Sprintf("  Uploaded: %s", imgData["filename"]))
+								logger.Substep(fmt.Sprintf("  Uploaded: %s", filename))
 								uploadedImagesCount++
 							} else {
-								logger.Warning(fmt.Sprintf("No image ID in response for %s", imgData["filename"]))
+								logger.Warning(fmt.Sprintf("No image ID in response for %s", filename))
 
 								// Track skipped image
 								skippedImages = append(skippedImages, SkippedImage{
@@ -1355,7 +1494,7 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 								sortOrder++
 							}
 						} else {
-							logger.Warning(fmt.Sprintf("Invalid response format for %s", imgData["filename"]))
+							logger.Warning(fmt.Sprintf("Invalid response format for %s", filename))
 
 							// Track skipped image
 							skippedImages = append(skippedImages, SkippedImage{
@@ -1421,21 +1560,18 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 					}
 				}
 
-				// Remove images from HTML and detect style
-				textHTML := removeImagesFromHTML(step.Content)
-				style := detectStyleFromHTML(textHTML)
-				textHTML = removeStyleDivs(textHTML)
+				// Process text content (after removing images and embeds)
+				textContent := removeImagesFromHTML(step.Content)
 
-				// Create TextContent block
-				if strings.TrimSpace(textHTML) != "" {
+				if strings.TrimSpace(textContent) != "" {
 					textUUID := generateUUID()
 					textBlock := map[string]interface{}{
 						"uuid":                textUUID,
 						"type":                "TextContent",
-						"body":                textHTML,
+						"body":                textContent,
 						"depth":               1,
 						"sort_order":          sortOrder,
-						"style":               style,
+						"style":               detectStyleFromHTML(textContent),
 						"show_copy_clipboard": false,
 					}
 					contentBlocks = append(contentBlocks, textBlock)
@@ -1637,7 +1773,8 @@ GOOS=darwin GOARCH=arm64 go build -o vlp2ss-mac-arm main.go
 
 // Helper functions for content block generation
 func generateUUID() string {
-	return fmt.Sprintf("%x", time.Now().UnixNano())
+	u, _ := uuid.NewRandom()
+	return u.String()
 }
 
 func slugify(text string) string {
@@ -1683,6 +1820,24 @@ func removeImagesFromHTML(htmlContent string) string {
 	return imgRegex.ReplaceAllString(htmlContent, "")
 }
 
+func extractYouTubeEmbeds(htmlContent string) []string {
+	if htmlContent == "" {
+		return nil
+	}
+	// Use regex to find all html-embed divs
+	re := regexp.MustCompile(`(?s)<div class="html-embed">.*?</div>`)
+	return re.FindAllString(htmlContent, -1)
+}
+
+func removeYouTubeEmbedsFromHTML(htmlContent string) string {
+	if htmlContent == "" {
+		return ""
+	}
+	// Use regex to remove all html-embed divs
+	re := regexp.MustCompile(`(?s)<div class="html-embed">.*?</div>`)
+	return re.ReplaceAllString(htmlContent, "")
+}
+
 func detectStyleFromHTML(htmlContent string) string {
 	// Detect ScreenSteps styles from VLP HTML div classes
 	if strings.Contains(htmlContent, "block-style-introduction") {
@@ -1724,13 +1879,13 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:     "vlp2ss",
 		Short:   "Convert VLP exported content to ScreenSteps format",
-		Version: "1.0",
+		Version: "1.0.1",
 		Long: `VLP2SS - The VLP to ScreenSteps Converter
 
 This tool converts VMware Lab Platform (VLP) exported content 
 to ScreenSteps format with enhanced logging and progress tracking.
 
-Version: 1.0
+Version: 1.0.1
 Author: Burke Azbill
 License: MIT`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {

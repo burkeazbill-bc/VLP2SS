@@ -338,7 +338,7 @@ Auth: HTTP Basic (username:token)
 - `POST /sites/{site_id}/manuals` - Create manual
 - `POST /sites/{site_id}/manuals/{manual_id}/chapters` - Create chapter
 - `POST /sites/{site_id}/chapters/{chapter_id}/articles` - Create article
-- `POST /sites/{site_id}/articles/{article_id}/images` - Upload image
+- `POST /sites/{site_id}/files` - Upload image
 - `PUT /sites/{site_id}/articles/{article_id}` - Update article
 
 #### Rate Limiting
