@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to VLP2SS - The VLP to ScreenSteps Converter! This document provides guidelines and instructions for contributing to the project.
 
-**Version:** 1.0.1
+**Version:** 1.0.2
 **Author:** Burke Azbill  
 **License:** MIT
 
@@ -602,7 +602,7 @@ What actually happened.
 
 ## Environment
 
-- VLP2SS version: 1.0.1
+- VLP2SS version: 1.0.2
 - OS: macOS 13.0
 - Python version: 3.11
 - Go version: 1.21
@@ -672,6 +672,6 @@ Thank you for contributing to VLP2SS! Your efforts help make this project better
 ---
 
 **Project:** VLP2SS - The VLP to ScreenSteps Converter  
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **Author:** Burke Azbill  
 **License:** MIT

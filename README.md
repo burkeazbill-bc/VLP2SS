@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/) [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://golang.org/) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **Author:** Burke Azbill  
 **License:** MIT
 
@@ -325,6 +325,7 @@ Actual Example Timing:
 | **21** | 107 | 0s | 4m 17s  |
 | **25** | 132 | 0s | 5m 13s  |
 | **34** | 133 | 0s | 6m 9s  |
+| **20** | 164 | 0s | 6m 9s |
 
 ## 🤝 Contributing
 
@@ -378,6 +379,8 @@ All dependencies are used in compliance with their respective licenses.
 
 ## 📝 Version History
 
+- **v1.0.2** (2025-11-11)
+  - Added progress tracking output to logging (percentages and ETA)
 - **v1.0.1** (2025-11-11)
   - Fix double encoded xml export translation
   - Fix Youtube embedded videos
@@ -434,7 +437,7 @@ For more details, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Status**: ✅ Production Ready
 
-**Last Updated**: November 7, 2025
+**Last Updated**: November 11, 2025
 
 **Author**: Burke Azbill
 

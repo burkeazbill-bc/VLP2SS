@@ -2,7 +2,7 @@
 
 A comprehensive toolset for converting VMware Lab Platform (VLP) exported content to ScreenSteps format, with API upload capabilities.
 
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **Author:** Burke Azbill  
 **License:** MIT
 

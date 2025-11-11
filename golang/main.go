@@ -172,8 +172,18 @@ type APIErrorResponse struct {
 
 // Logger with colors
 type Logger struct {
-	verbose bool
-	logFile *os.File
+	verbose           bool
+	logFile           *os.File
+	startTime         time.Time
+	totalManuals      int
+	totalChapters     int
+	totalArticles     int
+	totalImages       int
+	currentManual     int
+	currentChapter    int
+	currentArticle    int
+	processedArticles int
+	processedImages   int
 }
 
 func NewLogger(verbose bool) (*Logger, error) {
@@ -191,8 +201,9 @@ func NewLogger(verbose bool) (*Logger, error) {
 	}
 
 	return &Logger{
-		verbose: verbose,
-		logFile: logFile,
+		verbose:   verbose,
+		logFile:   logFile,
+		startTime: time.Now(),
 	}, nil
 }
 
@@ -242,6 +253,63 @@ func (l *Logger) Substep(message string) {
 	if l.verbose {
 		l.log("SUBSTEP: " + message)
 	}
+}
+
+func (l *Logger) SetTotals(manuals, chapters, articles, images int) {
+	l.totalManuals = manuals
+	l.totalChapters = chapters
+	l.totalArticles = articles
+	l.totalImages = images
+}
+
+func (l *Logger) GetProgressString() string {
+	manualPct := 0.0
+	if l.totalManuals > 0 {
+		manualPct = float64(l.currentManual) / float64(l.totalManuals) * 100
+	}
+	chapterPct := 0.0
+	if l.totalChapters > 0 {
+		chapterPct = float64(l.currentChapter) / float64(l.totalChapters) * 100
+	}
+	articlePct := 0.0
+	if l.totalArticles > 0 {
+		articlePct = float64(l.currentArticle) / float64(l.totalArticles) * 100
+	}
+	return fmt.Sprintf("[ Manual: %.0f%%, Chapter: %.0f%%, Article: %.0f%% ]", manualPct, chapterPct, articlePct)
+}
+
+func (l *Logger) EstimateTimeRemaining() string {
+	if l.processedArticles == 0 {
+		return "Calculating..."
+	}
+
+	// Use weighted formula based on user data
+	avgTimePerArticle := 12.5 // seconds
+	avgTimePerImage := 2.0    // seconds
+
+	articlesRemaining := l.totalArticles - l.processedArticles
+	imagesRemaining := l.totalImages - l.processedImages
+
+	estimatedRemaining := float64(articlesRemaining)*avgTimePerArticle + float64(imagesRemaining)*avgTimePerImage
+
+	minutes := int(estimatedRemaining) / 60
+	seconds := int(estimatedRemaining) % 60
+
+	if minutes > 0 {
+		return fmt.Sprintf("~%dm %ds", minutes, seconds)
+	}
+	return fmt.Sprintf("~%ds", seconds)
+}
+
+func (l *Logger) Progress(message string) {
+	progressStr := l.GetProgressString()
+	timeEst := l.EstimateTimeRemaining()
+	cyan := color.New(color.FgCyan)
+	blue := color.New(color.FgBlue)
+	blue.Printf("%s ", progressStr)
+	fmt.Printf("%s ", message)
+	cyan.Printf("[ETA: %s]\n", timeEst)
+	l.log(fmt.Sprintf("%s %s [ETA: %s]", progressStr, message, timeEst))
 }
 
 func (l *Logger) log(message string) {
@@ -726,12 +794,14 @@ func (c *Converter) ConvertZip(zipPath, outputDir string, cleanup bool) (string,
 	// Step 5: Write output
 	c.logger.Step(5, 5, "Writing output files")
 	outputPath := filepath.Join(outputDir, manual.Name)
-	if err := c.writeOutput(ssManual, outputPath, tempDir); err != nil {
+	articleCount, imageCount, err := c.writeOutput(ssManual, outputPath, tempDir)
+	if err != nil {
 		return "", fmt.Errorf("failed to write output: %w", err)
 	}
 
 	c.logger.Header("Conversion Complete!")
 	c.logger.Success(fmt.Sprintf("ScreenSteps content created at: %s", outputPath))
+	c.logger.Success(fmt.Sprintf("Converted %d chapters, %d articles, %d images", len(chapters), articleCount, imageCount))
 
 	elapsed := time.Since(startTime)
 	c.logger.Info(fmt.Sprintf("Total execution time: %s", elapsed.Round(time.Second)))
@@ -765,12 +835,14 @@ func (c *Converter) ConvertDirectory(dirPath, outputDir string) (string, error) 
 	// Write output
 	c.logger.Step(4, 4, "Writing output files")
 	outputPath := filepath.Join(outputDir, manual.Name)
-	if err := c.writeOutput(ssManual, outputPath, dirPath); err != nil {
+	articleCount, imageCount, err := c.writeOutput(ssManual, outputPath, dirPath)
+	if err != nil {
 		return "", fmt.Errorf("failed to write output: %w", err)
 	}
 
 	c.logger.Header("Conversion Complete!")
 	c.logger.Success(fmt.Sprintf("ScreenSteps content created at: %s", outputPath))
+	c.logger.Success(fmt.Sprintf("Converted %d chapters, %d articles, %d images", len(chapters), articleCount, imageCount))
 
 	elapsed := time.Since(startTime)
 	c.logger.Info(fmt.Sprintf("Total execution time: %s", elapsed.Round(time.Second)))
@@ -899,13 +971,52 @@ func (c *Converter) parseXML(xmlPath string) (*Manual, error) {
 }
 
 func (c *Converter) flattenStructure(manual *Manual) []SSChapter {
-	var chapters []SSChapter
+	// First pass: count totals for progress tracking
+	totalChapters := 0
+	totalArticles := 0
+	totalImages := 0
 
 	for idx, chapterNode := range manual.ContentNodes.Nodes {
 		// Skip first node if it's just the manual title
 		if idx == 0 && (chapterNode.Children == nil || len(chapterNode.Children.Nodes) == 0) {
 			continue
 		}
+		totalChapters++
+
+		if chapterNode.Children != nil {
+			totalArticles += len(chapterNode.Children.Nodes)
+			for _, articleNode := range chapterNode.Children.Nodes {
+				// Count images in article
+				totalImages += len(c.getNodeImages(&articleNode))
+				// Count images in steps
+				if articleNode.Children != nil {
+					for _, stepNode := range articleNode.Children.Nodes {
+						totalImages += len(c.getNodeImages(&stepNode))
+					}
+				}
+			}
+		}
+	}
+
+	// Reset and set totals for progress tracking
+	c.logger.SetTotals(1, totalChapters, totalArticles, totalImages)
+	c.logger.currentManual = 1
+	c.logger.currentChapter = 0
+	c.logger.currentArticle = 0
+	c.logger.processedArticles = 0
+	c.logger.processedImages = 0
+
+	var chapters []SSChapter
+	chapterIdx := 0
+
+	for idx, chapterNode := range manual.ContentNodes.Nodes {
+		// Skip first node if it's just the manual title
+		if idx == 0 && (chapterNode.Children == nil || len(chapterNode.Children.Nodes) == 0) {
+			continue
+		}
+
+		chapterIdx++
+		c.logger.currentChapter = chapterIdx
 
 		chapter := SSChapter{
 			ID:          chapterNode.ID,
@@ -922,6 +1033,9 @@ func (c *Converter) flattenStructure(manual *Manual) []SSChapter {
 			position := 1
 
 			for _, articleNode := range articleNodes {
+				c.logger.currentArticle++
+				c.logger.Progress(fmt.Sprintf("Processing article: %s", articleNode.Title))
+
 				article := SSArticle{
 					ID:       articleNode.ID,
 					Title:    articleNode.Title,
@@ -942,6 +1056,8 @@ func (c *Converter) flattenStructure(manual *Manual) []SSChapter {
 							Images:  c.getNodeImages(&stepNode),
 						}
 						article.Steps = append(article.Steps, step)
+						// Count processed images
+						c.logger.processedImages += len(c.getNodeImages(&stepNode))
 					}
 				} else {
 					// If no level 3, treat article content as single step
@@ -953,9 +1069,12 @@ func (c *Converter) flattenStructure(manual *Manual) []SSChapter {
 						Images:  c.getNodeImages(&articleNode),
 					}
 					article.Steps = append(article.Steps, step)
+					// Count processed images
+					c.logger.processedImages += len(c.getNodeImages(&articleNode))
 				}
 
 				chapter.Articles = append(chapter.Articles, article)
+				c.logger.processedArticles++
 			}
 		}
 
@@ -1139,7 +1258,7 @@ func (c *Converter) convertToScreenSteps(manual *Manual, chapters []SSChapter) S
 	}
 }
 
-func (c *Converter) writeOutput(manual SSManual, outputPath, sourceDir string) error {
+func (c *Converter) writeOutput(manual SSManual, outputPath, sourceDir string) (int, int, error) {
 	c.logger.Info("Writing ScreenSteps output files...")
 
 	// Create directory structure
@@ -1147,33 +1266,34 @@ func (c *Converter) writeOutput(manual SSManual, outputPath, sourceDir string) e
 	imagesDir := filepath.Join(outputPath, "images")
 
 	if err := os.MkdirAll(articlesDir, 0755); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
-		return err
+		return 0, 0, err
 	}
 
 	// Write TOC
 	tocFile := filepath.Join(outputPath, manual.Manual.ID+".json")
 	if err := c.writeJSON(tocFile, manual); err != nil {
-		return err
+		return 0, 0, err
 	}
 	c.logger.Substep(fmt.Sprintf("Created TOC: %s", filepath.Base(tocFile)))
 
-	// Write articles
+	// Write articles and count images
 	articleCount := 0
+	imageCount := 0
 	for _, chapter := range manual.Manual.Chapters {
 		for _, article := range chapter.Articles {
 			// Write article JSON (with steps)
 			articleFile := filepath.Join(articlesDir, article.ID+".json")
 			if err := c.writeJSON(articleFile, article); err != nil {
-				return err
+				return 0, 0, err
 			}
 
 			// Copy images from steps
 			articleImagesDir := filepath.Join(imagesDir, article.ID)
 			if err := os.MkdirAll(articleImagesDir, 0755); err != nil {
-				return err
+				return 0, 0, err
 			}
 
 			for _, step := range article.Steps {
@@ -1200,6 +1320,7 @@ func (c *Converter) writeOutput(manual SSManual, outputPath, sourceDir string) e
 						c.logger.Warning(fmt.Sprintf("Failed to copy image %s to %s: %v", srcImage, dstImage, err))
 					} else {
 						c.logger.Substep(fmt.Sprintf("    Copied: %s", baseFilename))
+						imageCount++
 					}
 				}
 			}
@@ -1208,10 +1329,10 @@ func (c *Converter) writeOutput(manual SSManual, outputPath, sourceDir string) e
 		}
 	}
 
-	c.logger.Substep(fmt.Sprintf("Created %d article files", articleCount))
+	c.logger.Substep(fmt.Sprintf("Created %d article files with %d images", articleCount, imageCount))
 	c.logger.Success(fmt.Sprintf("Output written to: %s", outputPath))
 
-	return nil
+	return articleCount, imageCount, nil
 }
 
 func (c *Converter) writeJSON(filename string, data interface{}) error {
@@ -1272,6 +1393,28 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 	logger.Substep(fmt.Sprintf("Manual: %s", manual.Manual.Title))
 	logger.Substep(fmt.Sprintf("Chapters: %d", len(manual.Manual.Chapters)))
 
+	// Count totals for progress tracking
+	totalChapters := len(manual.Manual.Chapters)
+	totalArticles := 0
+	totalImages := 0
+	for _, chapter := range manual.Manual.Chapters {
+		totalArticles += len(chapter.Articles)
+		for _, article := range chapter.Articles {
+			for _, step := range article.Steps {
+				totalImages += len(step.Images)
+			}
+		}
+	}
+
+	// Reset and set totals for progress tracking (fresh start for upload phase)
+	logger.SetTotals(1, totalChapters, totalArticles, totalImages)
+	logger.currentManual = 1
+	logger.currentChapter = 0
+	logger.currentArticle = 0
+	logger.processedArticles = 0
+	logger.processedImages = 0
+	logger.startTime = time.Now() // Reset start time for upload phase
+
 	// Step 2: Create manual with chapters
 	logger.Step(2, 4, "Creating manual with chapters in ScreenSteps")
 
@@ -1306,12 +1449,15 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 
 	// Step 3: Create articles, upload images, and add content
 	logger.Step(3, 4, "Creating articles and adding content")
-	articleCount := 0
 
-	for _, chapter := range manual.Manual.Chapters {
+	for chapterIdx, chapter := range manual.Manual.Chapters {
+		logger.currentChapter = chapterIdx + 1
 		chapterID := chapterMap[chapter.ID]
 
 		for _, article := range chapter.Articles {
+			logger.currentArticle++
+			logger.Progress(fmt.Sprintf("Creating article: %s", article.Title))
+
 			// Create article placeholder
 			articleID, err := api.CreateArticle(
 				siteID,
@@ -1323,9 +1469,6 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 				logger.Warning(fmt.Sprintf("Failed to create article %s: %v", article.Title, err))
 				continue
 			}
-
-			articleCount++
-			logger.Substep(fmt.Sprintf("Created article: %s", article.Title))
 
 			// Generate content blocks from steps
 			contentBlocks := []map[string]interface{}{}
@@ -1353,7 +1496,6 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 
 				// Process images
 				images := extractImagesFromHTML(step.Content)
-				articleImagesDir := filepath.Join(filepath.Dir(chapter.Path), "images", article.ID)
 
 				// Extract and process YouTube embeds first
 				youtubeEmbeds := extractYouTubeEmbeds(step.Content)
@@ -1588,19 +1730,26 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 			err = api.UpdateArticleContents(siteID, fmt.Sprintf("%d", articleID), article.Title, contentBlocks, true)
 			if err != nil {
 				logger.Warning(fmt.Sprintf("Failed to update article contents %s: %v", article.Title, err))
-			} else {
-				logger.Substep(fmt.Sprintf("  Updated content for: %s", article.Title))
+			}
+
+			// Track processed articles and images
+			logger.processedArticles++
+			for _, step := range article.Steps {
+				logger.processedImages += len(step.Images)
 			}
 		}
 	}
 
+	// Final progress update
+	logger.Progress("Upload complete!")
+
 	logger.Step(4, 4, "Upload complete")
-	logger.Success(fmt.Sprintf("Created %d articles", articleCount))
+	logger.Success(fmt.Sprintf("Created %d articles", logger.processedArticles))
 
 	logger.Header("Upload Complete!")
 	logger.Success(fmt.Sprintf("Manual: %s", manual.Manual.Title))
 	logger.Success(fmt.Sprintf("Manual ID: %d", manualID))
-	logger.Success(fmt.Sprintf("Articles uploaded: %d", articleCount))
+	logger.Success(fmt.Sprintf("Articles uploaded: %d", logger.processedArticles))
 	logger.Success(fmt.Sprintf("Images uploaded: %d", uploadedImagesCount))
 	if len(skippedImages) > 0 {
 		logger.Warning(fmt.Sprintf("Images skipped: %d", len(skippedImages)))
@@ -1879,13 +2028,13 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:     "vlp2ss",
 		Short:   "Convert VLP exported content to ScreenSteps format",
-		Version: "1.0.1",
+		Version: "1.0.2",
 		Long: `VLP2SS - The VLP to ScreenSteps Converter
 
 This tool converts VMware Lab Platform (VLP) exported content 
 to ScreenSteps format with enhanced logging and progress tracking.
 
-Version: 1.0.1
+Version: 1.0.2
 Author: Burke Azbill
 License: MIT`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -1913,6 +2062,23 @@ License: MIT`,
 				cmd.Help()
 				fmt.Println("\nFor detailed examples, run with --examples")
 				return
+			}
+
+			// Clean logs and output directories at startup
+			if err := os.RemoveAll("logs"); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Failed to clean logs directory: %v\n", err)
+			}
+			if err := os.MkdirAll("logs", 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to create logs directory: %v\n", err)
+				os.Exit(1)
+			}
+
+			if err := os.RemoveAll(outputDir); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Failed to clean output directory: %v\n", err)
+			}
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to create output directory: %v\n", err)
+				os.Exit(1)
 			}
 
 			logger, err := NewLogger(verbose)

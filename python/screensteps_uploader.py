@@ -546,6 +546,17 @@ class ScreenStepsUploader:
         self.api = ScreenStepsAPI(account, user, token, self)
         self.api.verbose = verbose  # Pass verbose flag to API client
         self.image_map = {}  # Map old image paths to new URLs
+        # Progress tracking
+        self.start_time = time.time()
+        self.total_manuals = 0
+        self.total_chapters = 0
+        self.total_articles = 0
+        self.total_images = 0
+        self.current_manual = 0
+        self.current_chapter = 0
+        self.current_article = 0
+        self.processed_articles = 0
+        self.processed_images = 0
     
     def setup_logging(self, verbose: bool):
         """Configure logging"""
@@ -617,6 +628,55 @@ class ScreenStepsUploader:
             indent_str = "  " * indent
             print(f"{indent_str}→ {message}")
         self.logger.debug(f"SUBSTEP: {message}")
+    
+    def set_totals(self, manuals: int = 1, chapters: int = 0, articles: int = 0, images: int = 0):
+        """Set total counts for progress tracking"""
+        self.total_manuals = manuals
+        self.total_chapters = chapters
+        self.total_articles = articles
+        self.total_images = images
+    
+    def get_progress_string(self) -> str:
+        """Generate progress percentage string"""
+        manual_pct = (self.current_manual / self.total_manuals * 100) if self.total_manuals > 0 else 0
+        chapter_pct = (self.current_chapter / self.total_chapters * 100) if self.total_chapters > 0 else 0
+        article_pct = (self.current_article / self.total_articles * 100) if self.total_articles > 0 else 0
+        return f"[ Manual: {manual_pct:.0f}%, Chapter: {chapter_pct:.0f}%, Article: {article_pct:.0f}% ]"
+    
+    def estimate_time_remaining(self) -> str:
+        """Estimate remaining time based on progress"""
+        if self.processed_articles == 0:
+            return "Calculating..."
+        
+        elapsed = time.time() - self.start_time
+        
+        # Use weighted formula: articles are primary driver, images add time
+        # Based on user data: ~10-15 seconds per article + ~2 seconds per image
+        avg_time_per_article = 12.5  # seconds
+        avg_time_per_image = 2.0     # seconds
+        
+        # Calculate estimated total time
+        estimated_total = (self.total_articles * avg_time_per_article) + (self.total_images * avg_time_per_image)
+        
+        # Calculate progress-based estimate
+        articles_remaining = self.total_articles - self.processed_articles
+        images_remaining = self.total_images - self.processed_images
+        
+        estimated_remaining = (articles_remaining * avg_time_per_article) + (images_remaining * avg_time_per_image)
+        
+        # Format time
+        minutes, seconds = divmod(int(estimated_remaining), 60)
+        if minutes > 0:
+            return f"~{minutes}m {seconds}s"
+        else:
+            return f"~{seconds}s"
+    
+    def progress(self, message: str):
+        """Print a progress message with percentages and time estimate"""
+        progress_str = self.get_progress_string()
+        time_est = self.estimate_time_remaining()
+        print(f"{Colors.OKBLUE}{progress_str} {message} {Colors.OKCYAN}[ETA: {time_est}]{Colors.ENDC}")
+        self.logger.info(f"{progress_str} {message} [ETA: {time_est}]")
     
     def _html_to_content_blocks(self, html_content: str) -> List[Dict]:
         """Convert HTML content to ScreenSteps content blocks"""
@@ -714,6 +774,18 @@ class ScreenStepsUploader:
         self.substep(f"Manual: {manual_info['title']}")
         self.substep(f"Chapters: {len(manual_info['chapters'])}")
         
+        # Count totals for progress tracking
+        total_chapters = len(manual_info['chapters'])
+        total_articles = sum(len(ch['articles']) for ch in manual_info['chapters'])
+        total_images = 0
+        for chapter_data in manual_info['chapters']:
+            for article_data in chapter_data['articles']:
+                for step in article_data.get('steps', []):
+                    total_images += len(step.get('images', []))
+        
+        self.set_totals(manuals=1, chapters=total_chapters, articles=total_articles, images=total_images)
+        self.current_manual = 1
+        
         # Step 3: Create manual with chapters
         self.step(3, 5, "Creating manual with chapters in ScreenSteps")
         chapter_map = {}
@@ -767,35 +839,27 @@ class ScreenStepsUploader:
         self.step(4, 5, "Creating articles and adding content")
         images_dir = content_dir / "images"  # Images are in content_dir/images/article_id/
         
-        # Count total articles for progress
-        total_articles = sum(len(ch['articles']) for ch in manual_info['chapters'])
-        article_count = 0
-        
-        if not self.verbose:
-            print(f"Creating {total_articles} articles...")
-        
-        for chapter_data in manual_info['chapters']:
+        for chapter_idx, chapter_data in enumerate(manual_info['chapters'], 1):
+            self.current_chapter = chapter_idx
             chapter_id = chapter_map.get(chapter_data['id'])
             if not chapter_id:
                 continue
             
             for article_data in chapter_data['articles']:
-                article_count += 1
+                self.current_article += 1
                 article_vlp_id = article_data['id']  # VLP article ID for finding images
+                
+                # Show progress
+                self.progress(f"Creating article: {article_data['title']}")
                 
                 # Create article placeholder
                 article = self.api.create_article(
                     site_id,
                     chapter_id,
                     article_data['title'],
-                    position=article_data.get('position', article_count)
+                    position=article_data.get('position', self.current_article)
                 )
                 article_id_new = str(article['id'])
-                
-                if not self.verbose:
-                    print(f"  [{article_count}/{total_articles}] {article_data['title']}")
-                else:
-                    self.substep(f"Created article: {article_data['title']}")
                 
                 # Generate content blocks (uploads images internally)
                 content_blocks = self.api.generate_content_blocks(
@@ -823,13 +887,19 @@ class ScreenStepsUploader:
                             self.substep(f"  Updated content with {len(content_blocks)} blocks")
                     except Exception as e:
                         self.warning(f"Failed to update article contents: {e}")
+                
+                # Track processed articles and images
+                self.processed_articles += 1
+                # Count images in this article
+                for step in article_data.get('steps', []):
+                    self.processed_images += len(step.get('images', []))
         
-        if not self.verbose:
-            print(f"✓ Upload complete! Created {article_count} articles")
+        # Final progress update
+        self.progress("Upload complete!")
         
         self.header("Upload Complete!")
         self.success(f"Manual: {manual_info['title']}")
-        self.success(f"Manual created with {article_count} articles")
+        self.success(f"Manual created with {self.processed_articles} articles")
         self.success(f"Images uploaded: {uploaded_images_count[0]}")
         if skipped_images:
             self.warning(f"Images skipped: {len(skipped_images)}")
@@ -869,7 +939,7 @@ class ScreenStepsUploader:
         return {
             'manual_id': manual_id,
             'chapters': len(chapter_map),
-            'articles': article_count
+            'articles': self.processed_articles
         }
     
     def _find_toc_file(self, content_dir: Path) -> Optional[Path]:
@@ -960,7 +1030,7 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Enable verbose logging')
     parser.add_argument('--version', action='version',
-                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0.1\nAuthor: Burke Azbill\nLicense: MIT')
+                       version='VLP2SS - The VLP to ScreenSteps Uploader\nVersion: 1.0.2\nAuthor: Burke Azbill\nLicense: MIT')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
     

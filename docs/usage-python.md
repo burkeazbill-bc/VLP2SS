@@ -2,7 +2,7 @@
 
 This guide covers the Python implementation of VLP2SS, which provides a full-featured converter and uploader with comprehensive logging and error handling.
 
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **Author:** Burke Azbill  
 **License:** MIT
 

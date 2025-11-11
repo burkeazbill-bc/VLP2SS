@@ -4,7 +4,7 @@ VLP to ScreenSteps Converter
 Converts VMware Lab Platform (VLP) exported content to ScreenSteps format
 
 Author: Burke Azbill
-Version: 1.0.1
+Version: 1.0.2
 """
 
 import sys
@@ -43,6 +43,16 @@ class ProgressLogger:
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
         self.setup_logging()
+        self.start_time = time.time()
+        self.total_manuals = 0
+        self.total_chapters = 0
+        self.total_articles = 0
+        self.total_images = 0
+        self.current_manual = 0
+        self.current_chapter = 0
+        self.current_article = 0
+        self.processed_articles = 0
+        self.processed_images = 0
     
     def setup_logging(self):
         """Configure logging with file and console handlers"""
@@ -114,6 +124,55 @@ class ProgressLogger:
             indent_str = "  " * indent
             print(f"{indent_str}→ {message}")
         logging.debug(f"SUBSTEP: {message}")
+    
+    def set_totals(self, manuals: int = 1, chapters: int = 0, articles: int = 0, images: int = 0):
+        """Set total counts for progress tracking"""
+        self.total_manuals = manuals
+        self.total_chapters = chapters
+        self.total_articles = articles
+        self.total_images = images
+    
+    def get_progress_string(self) -> str:
+        """Generate progress percentage string"""
+        manual_pct = (self.current_manual / self.total_manuals * 100) if self.total_manuals > 0 else 0
+        chapter_pct = (self.current_chapter / self.total_chapters * 100) if self.total_chapters > 0 else 0
+        article_pct = (self.current_article / self.total_articles * 100) if self.total_articles > 0 else 0
+        return f"[ Manual: {manual_pct:.0f}%, Chapter: {chapter_pct:.0f}%, Article: {article_pct:.0f}% ]"
+    
+    def estimate_time_remaining(self) -> str:
+        """Estimate remaining time based on progress"""
+        if self.processed_articles == 0:
+            return "Calculating..."
+        
+        elapsed = time.time() - self.start_time
+        
+        # Use weighted formula: articles are primary driver, images add time
+        # Based on user data: ~10-15 seconds per article + ~2 seconds per image
+        avg_time_per_article = 12.5  # seconds
+        avg_time_per_image = 2.0     # seconds
+        
+        # Calculate estimated total time
+        estimated_total = (self.total_articles * avg_time_per_article) + (self.total_images * avg_time_per_image)
+        
+        # Calculate progress-based estimate
+        articles_remaining = self.total_articles - self.processed_articles
+        images_remaining = self.total_images - self.processed_images
+        
+        estimated_remaining = (articles_remaining * avg_time_per_article) + (images_remaining * avg_time_per_image)
+        
+        # Format time
+        minutes, seconds = divmod(int(estimated_remaining), 60)
+        if minutes > 0:
+            return f"~{minutes}m {seconds}s"
+        else:
+            return f"~{seconds}s"
+    
+    def progress(self, message: str):
+        """Print a progress message with percentages and time estimate"""
+        progress_str = self.get_progress_string()
+        time_est = self.estimate_time_remaining()
+        print(f"{Colors.OKBLUE}{progress_str} {message} {Colors.OKCYAN}[ETA: {time_est}]{Colors.ENDC}")
+        logging.info(f"{progress_str} {message} [ETA: {time_est}]")
 
 # Helper functions for content block generation
 def generate_uuid():
@@ -280,9 +339,31 @@ class VLPParser:
         - Level 2 nodes become articles  
         - Level 3 nodes become steps (content_blocks) within articles
         """
-        chapters = []
+        # First pass: count totals for progress tracking
+        total_chapters = len(manual_data['chapters'])
+        total_articles = 0
+        total_images = 0
         
         for chapter_node in manual_data['chapters']:
+            if chapter_node.get('children'):
+                total_articles += len(chapter_node['children'])
+                for article_node in chapter_node['children']:
+                    # Count images in article
+                    total_images += len(article_node.get('images', []))
+                    # Count images in steps
+                    if article_node.get('children'):
+                        for step_node in article_node['children']:
+                            total_images += len(step_node.get('images', []))
+        
+        # Set totals for progress tracking
+        self.logger.set_totals(manuals=1, chapters=total_chapters, articles=total_articles, images=total_images)
+        self.logger.current_manual = 1
+        
+        chapters = []
+        
+        for chapter_idx, chapter_node in enumerate(manual_data['chapters'], 1):
+            self.logger.current_chapter = chapter_idx
+            
             chapter = {
                 'id': chapter_node['id'],
                 'title': chapter_node['title'],
@@ -297,6 +378,9 @@ class VLPParser:
                 sorted_articles = sorted(chapter_node['children'], key=lambda x: x['order'])
                 
                 for position, article_node in enumerate(sorted_articles, start=1):
+                    self.logger.current_article += 1
+                    self.logger.progress(f"Processing article: {article_node['title']}")
+                    
                     article = {
                         'id': article_node['id'],
                         'title': article_node['title'],
@@ -318,6 +402,8 @@ class VLPParser:
                                 'images': step_node.get('images', [])
                             }
                             article['steps'].append(step)
+                            # Count processed images
+                            self.logger.processed_images += len(step_node.get('images', []))
                     else:
                         # If no level 3, treat article content as single step
                         step = {
@@ -328,8 +414,11 @@ class VLPParser:
                             'images': article_node.get('images', [])
                         }
                         article['steps'].append(step)
+                        # Count processed images
+                        self.logger.processed_images += len(article_node.get('images', []))
                     
                     chapter['articles'].append(article)
+                    self.logger.processed_articles += 1
             
             chapters.append(chapter)
         
@@ -540,8 +629,8 @@ class ScreenStepsConverter:
         return manual
     
     def write_output(self, manual: Dict, chapters: List[Dict], 
-                     output_dir: Path, images_source: Path):
-        """Write ScreenSteps formatted output"""
+                     output_dir: Path, images_source: Path) -> Tuple[int, int]:
+        """Write ScreenSteps formatted output and return counts"""
         
         self.logger.info("Writing ScreenSteps output files...")
         
@@ -557,8 +646,9 @@ class ScreenStepsConverter:
             json.dump(manual, f, indent=2, ensure_ascii=False)
         self.logger.substep(f"Created TOC: {toc_file.name}")
         
-        # Write individual articles
+        # Write individual articles and count images
         article_count = 0
+        image_count = 0
         for chapter in manual['manual']['chapters']:
             for article in chapter['articles']:
                 article_id = article['id']
@@ -578,11 +668,14 @@ class ScreenStepsConverter:
                         if src_image.exists():
                             dst_image = article_images_dir / src_image.name
                             shutil.copy2(src_image, dst_image)
+                            image_count += 1
                 
                 article_count += 1
         
-        self.logger.substep(f"Created {article_count} article files")
+        self.logger.substep(f"Created {article_count} article files with {image_count} images")
         self.logger.success(f"Output written to: {output_dir}")
+        
+        return article_count, image_count
 
 class VLPToScreenStepsConverter:
     """Main converter class"""
@@ -631,7 +724,7 @@ class VLPToScreenStepsConverter:
         output_path.mkdir(parents=True, exist_ok=True)
         
         images_source = temp_dir / "images"
-        self.converter.write_output(manual, chapters, output_path, images_source)
+        article_count, image_count = self.converter.write_output(manual, chapters, output_path, images_source)
         
         # Cleanup
         if cleanup:
@@ -640,6 +733,7 @@ class VLPToScreenStepsConverter:
         
         self.logger.header("Conversion Complete!")
         self.logger.success(f"ScreenSteps content created at: {output_path}")
+        self.logger.success(f"Converted {len(chapters)} chapters, {article_count} articles, {image_count} images")
         self.logger.info(f"Log file: {self.logger.log_file}")
         
         return output_path
@@ -677,10 +771,11 @@ class VLPToScreenStepsConverter:
         output_path.mkdir(parents=True, exist_ok=True)
         
         images_source = dir_path / "images"
-        self.converter.write_output(manual, chapters, output_path, images_source)
+        article_count, image_count = self.converter.write_output(manual, chapters, output_path, images_source)
         
         self.logger.header("Conversion Complete!")
         self.logger.success(f"ScreenSteps content created at: {output_path}")
+        self.logger.success(f"Converted {len(chapters)} chapters, {article_count} articles, {image_count} images")
         self.logger.info(f"Log file: {self.logger.log_file}")
         
         return output_path
@@ -782,7 +877,7 @@ def main():
     parser.add_argument('--no-cleanup', action='store_true',
                        help='Keep temporary files after conversion')
     parser.add_argument('--version', action='version',
-                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0.1\nAuthor: Burke Azbill\nLicense: MIT')
+                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0.2\nAuthor: Burke Azbill\nLicense: MIT')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
     
@@ -807,6 +902,16 @@ def main():
         if not input_path.exists():
             print(f"{Colors.FAIL}Error: Input path does not exist: {input_path}{Colors.ENDC}")
             return 1
+        
+        # Clean logs and output directories at startup
+        logs_dir = Path("logs")
+        if logs_dir.exists():
+            shutil.rmtree(logs_dir)
+        logs_dir.mkdir(exist_ok=True)
+        
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
         
         converter = VLPToScreenStepsConverter(verbose=args.verbose)
         

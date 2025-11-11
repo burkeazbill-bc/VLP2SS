@@ -2,7 +2,7 @@
 
 This guide covers the Go implementation of VLP2SS, which provides a high-performance, standalone binary with no runtime dependencies.
 
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **Author:** Burke Azbill  
 **License:** MIT
 
