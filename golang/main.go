@@ -1126,40 +1126,143 @@ func (c *Converter) convertVLPFormatting(htmlContent string) string {
 	// Convert YouTube embeds first (before other transformations)
 	htmlContent = c.convertYouTubeEmbeds(htmlContent)
 
-	// Map of VLP CSS classes to HTML tags
-	// c5 is commonly used for bold/strong text in VLP exports
+	// Convert VLP paragraph classes to ScreenSteps formatted blocks
+	htmlContent = c.convertVLPParagraphStyles(htmlContent)
+
+	// Regex to find all span tags with a class attribute
+	spanRegex := regexp.MustCompile(`<span\s+class="([^"]+)"[^>]*>(.*?)</span>`)
+
+	// Map of VLP CSS classes to HTML tags with priority
 	classToTagMap := map[string]string{
-		"c5": "strong",
+		"c0": "strong",
 		"c3": "strong",
-		"c4": "em",
+		"c5": "strong",
 		"c6": "code",
-		"c7": "u",
+		"c7": "strong",
 	}
 
-	// Convert <span class="c5">text</span> to <strong>text</strong>
-	for class, tag := range classToTagMap {
-		// Pattern to match <span class="cX">content</span> including nested tags
-		// We use a non-greedy match to handle nested spans correctly
-		pattern := fmt.Sprintf(`<span class="%s">(.*?)</span>`, class)
-		re := regexp.MustCompile(pattern)
-		replacement := fmt.Sprintf("<%s>$1</%s>", tag, tag)
-		htmlContent = re.ReplaceAllString(htmlContent, replacement)
+	// Replace spans in a single pass to handle priorities correctly
+	htmlContent = spanRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		submatches := spanRegex.FindStringSubmatch(match)
+		if len(submatches) < 3 {
+			return match // Should not happen with a valid match
+		}
+		classes := strings.Fields(submatches[1])
+		content := submatches[2]
 
-		// Also handle spans with multiple classes like class="c1 c5"
-		pattern = fmt.Sprintf(`<span[^>]*class="[^"]*\b%s\b[^"]*"[^>]*>(.*?)</span>`, class)
-		re = regexp.MustCompile(pattern)
-		htmlContent = re.ReplaceAllString(htmlContent, replacement)
-	}
+		var replacementTag string
 
-	// Remove empty spans and spans with only whitespace classes (like c0, c1, c2)
-	// These are typically just container spans without semantic meaning
-	emptySpanPattern := regexp.MustCompile(`<span class="c[012]">(.*?)</span>`)
-	htmlContent = emptySpanPattern.ReplaceAllString(htmlContent, "$1")
+		// Prioritize 'c5' (strong) over other classes
+		for _, class := range classes {
+			if class == "c5" {
+				replacementTag = "strong"
+				break
+			}
+		}
+
+		// If c5 is not found, use the first match from the map
+		if replacementTag == "" {
+			for _, class := range classes {
+				if tag, ok := classToTagMap[class]; ok {
+					replacementTag = tag
+					break
+				}
+			}
+		}
+
+		if replacementTag != "" {
+			return fmt.Sprintf("<%s>%s</%s>", replacementTag, content, replacementTag)
+		}
+
+		// If no mapping is found (e.g., class="c0"), unwrap the span
+		return content
+	})
 
 	// Clean up any remaining empty spans
-	emptySpanPattern = regexp.MustCompile(`<span[^>]*>\s*</span>`)
+	emptySpanPattern := regexp.MustCompile(`<span[^>]*>\s*</span>`)
 	htmlContent = emptySpanPattern.ReplaceAllString(htmlContent, "")
 
+	// Normalize <ol> start attributes by removing them
+	olStartPattern := regexp.MustCompile(`(<ol[^>]*) start="[^"]*"`)
+	htmlContent = olStartPattern.ReplaceAllString(htmlContent, "$1")
+
+	return htmlContent
+}
+
+func (c *Converter) convertVLPParagraphStyles(htmlContent string) string {
+	// Map of VLP paragraph classes to ScreenSteps styles
+	pClassToStyleMap := map[string]string{
+		"c10": "introduction",
+		"c44": "introduction",
+		"c48": "info",
+		// Add other mappings here as they are identified
+	}
+
+	for pClass, style := range pClassToStyleMap {
+		// Regex to find one or more consecutive <p> tags with the specific class,
+		// allowing for other classes to be present.
+		// It also handles optional whitespace between the p tags.
+		groupPattern := fmt.Sprintf(`(?s)((?:<p\s+class="[^"]*\b%s\b[^"]*".*?</p>\s*)+)`, pClass)
+		groupRegex := regexp.MustCompile(groupPattern)
+
+		htmlContent = groupRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
+			// Extract individual p tags from the matched group
+			pTagPattern := fmt.Sprintf(`(?s)<p\s+class="[^"]*\b%s\b[^"]*".*?</p>`, pClass)
+			pTagExtractor := regexp.MustCompile(pTagPattern)
+			pTags := pTagExtractor.FindAllString(match, -1)
+
+			var contentBuilder strings.Builder
+			var imageOnlyBuilder strings.Builder
+			hasContent := false
+
+			// Concatenate non-empty paragraphs
+			// Styled blocks should only contain text content, not standalone images
+			for _, pTag := range pTags {
+				// Check if the paragraph has meaningful text content
+				tagContentRegex := regexp.MustCompile(`(?s)<p[^>]*>(.*)</p>`)
+				submatches := tagContentRegex.FindStringSubmatch(pTag)
+				if len(submatches) > 1 {
+					// Strip tags to check for text content
+					content := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(submatches[1], "")
+					content = strings.TrimSpace(content)
+
+					// Only include paragraphs with actual text content in styled block
+					if content != "" {
+						contentBuilder.WriteString(pTag)
+						hasContent = true
+					} else if strings.Contains(pTag, "<img") {
+						// Preserve image-only paragraphs outside the styled block
+						imageOnlyBuilder.WriteString(pTag)
+					}
+					// Empty paragraphs with no text and no images are discarded
+				}
+			}
+
+			// Build the result
+			var result strings.Builder
+
+			// If we have text content, wrap it in a styled div
+			if hasContent {
+				result.WriteString(fmt.Sprintf(
+					`<div class="screensteps-styled-block" data-style="%s">%s</div>`,
+					style,
+					contentBuilder.String(),
+				))
+			}
+
+			// Append any image-only paragraphs after the styled block
+			if imageOnlyBuilder.Len() > 0 {
+				result.WriteString(imageOnlyBuilder.String())
+			}
+
+			// If we have neither text content nor images, return empty string to remove the block
+			if !hasContent && imageOnlyBuilder.Len() == 0 {
+				return ""
+			}
+
+			return result.String()
+		})
+	}
 	return htmlContent
 }
 
@@ -1358,7 +1461,7 @@ type SkippedImage struct {
 }
 
 // Uploader
-func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger *Logger) error {
+func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger *Logger, suffix bool) error {
 	startTime := time.Now()
 	logger.Header("ScreenSteps Content Uploader")
 	logger.Info(fmt.Sprintf("Content directory: %s", contentDir))
@@ -1428,8 +1531,12 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 		})
 	}
 
+	manualTitle := manual.Manual.Title
+	if suffix {
+		manualTitle += "-go"
+	}
 	// Create manual with all chapters in one call
-	manualResp, err := api.CreateManual(siteID, manual.Manual.Title, chaptersArray, false)
+	manualResp, err := api.CreateManual(siteID, manualTitle, chaptersArray, false)
 	if err != nil {
 		return fmt.Errorf("failed to create manual: %w", err)
 	}
@@ -1494,234 +1601,120 @@ func UploadToScreenSteps(contentDir, account, user, token, siteID string, logger
 				contentBlocks = append(contentBlocks, stepBlock)
 				sortOrder++
 
-				// Process images
-				images := extractImagesFromHTML(step.Content)
+				// New sequential parsing logic to preserve content order
+				blockRegex := regexp.MustCompile(`(?s)(<div class="html-embed">.*?</div>|<div class="screensteps-styled-block"[^>]*>.*?</div>|<img[^>]+src="[^"]+"[^>]*>)`)
+				indexes := blockRegex.FindAllStringSubmatchIndex(step.Content, -1)
+				lastIndex := 0
 
-				// Extract and process YouTube embeds first
-				youtubeEmbeds := extractYouTubeEmbeds(step.Content)
-				for _, embedHTML := range youtubeEmbeds {
-					embedUUID := generateUUID()
-					embedBlock := map[string]interface{}{
-						"uuid":                embedUUID,
-						"type":                "TextContent",
-						"body":                embedHTML,
-						"depth":               1,
-						"sort_order":          sortOrder,
-						"style":               "html-embed",
-						"show_copy_clipboard": false,
-					}
-					contentBlocks = append(contentBlocks, embedBlock)
-					stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), embedUUID)
-					sortOrder++
-				}
+				imgTagRegex := regexp.MustCompile(`<img[^>]+src="([^"]+)"[^>]*>`)
+				styledBlockRegex := regexp.MustCompile(`<div class="screensteps-styled-block"[^>]*data-style="([^"]+)"[^>]*>(.*?)</div>`)
 
-				// Remove YouTube embeds from the main content before processing text and images
-				step.Content = removeYouTubeEmbedsFromHTML(step.Content)
+				for _, matchIndexes := range indexes {
+					start, end := matchIndexes[0], matchIndexes[1]
 
-				for _, imgData := range images {
-					filename, ok := imgData["filename"]
-					if !ok || filename == "" {
-						continue
-					}
-					imagePath := filepath.Join(imagesDir, filename)
-					if _, err := os.Stat(imagePath); err == nil {
-						// Upload image
-						imageResponse, err := api.UploadImage(siteID, fmt.Sprintf("%d", articleID), imagePath)
-						if err != nil {
-							logger.Warning(fmt.Sprintf("Failed to upload image %s: %v", filename, err))
-
-							// Track skipped image
-							skippedImages = append(skippedImages, SkippedImage{
-								ImagePath:    imagePath,
-								ChapterTitle: chapter.Title,
-								ArticleTitle: article.Title,
-								StepTitle:    step.Title,
-							})
-
-							// Add placeholder alert block for missing image
-							placeholderUUID := generateUUID()
-							placeholderBlock := map[string]interface{}{
-								"uuid":          placeholderUUID,
-								"type":          "TextContent",
-								"body":          "<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>",
-								"style":         "alert",
-								"depth":         1,
-								"sort_order":    sortOrder,
-								"anchor_name":   "",
-								"auto_numbered": false,
-								"foldable":      false,
-							}
-							contentBlocks = append(contentBlocks, placeholderBlock)
-
-							// Add to step's content_block_ids
-							if cbIDs, ok := stepBlock["content_block_ids"].([]string); ok {
-								stepBlock["content_block_ids"] = append(cbIDs, placeholderUUID)
-							}
-							sortOrder++
-
-							continue
+					// 1. Process text before the special block
+					textBefore := step.Content[lastIndex:start]
+					plainTextBefore := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(textBefore, "")
+					if strings.TrimSpace(plainTextBefore) != "" {
+						textUUID := generateUUID()
+						textBlock := map[string]interface{}{
+							"uuid":                textUUID,
+							"type":                "TextContent",
+							"body":                textBefore,
+							"depth":               1,
+							"sort_order":          sortOrder,
+							"style":               nil,
+							"show_copy_clipboard": false,
 						}
-
-						// Parse response: {"file": {"id": 9752430, "width": 404, "height": 310, "url": "...", ...}}
-						if fileData, ok := imageResponse["file"].(map[string]interface{}); ok {
-							if imageAssetID, ok := fileData["id"].(float64); ok {
-								width := 800
-								height := 600
-								url := ""
-
-								if w, ok := fileData["width"].(float64); ok {
-									width = int(w)
-								}
-								if h, ok := fileData["height"].(float64); ok {
-									height = int(h)
-								}
-								if u, ok := fileData["url"].(string); ok {
-									url = u
-								}
-
-								// Create ImageContentBlock
-								imageUUID := generateUUID()
-								imageBlock := map[string]interface{}{
-									"uuid":            imageUUID,
-									"type":            "ImageContentBlock",
-									"asset_file_name": filename,
-									"image_asset_id":  int(imageAssetID),
-									"width":           width,
-									"height":          height,
-									"depth":           1,
-									"sort_order":      sortOrder,
-									"alt_tag":         imgData["alt"],
-									"url":             url,
-								}
-								contentBlocks = append(contentBlocks, imageBlock)
-
-								// Add to step's content_block_ids
-								if cbIDs, ok := stepBlock["content_block_ids"].([]string); ok {
-									stepBlock["content_block_ids"] = append(cbIDs, imageUUID)
-								}
-								sortOrder++
-
-								logger.Substep(fmt.Sprintf("  Uploaded: %s", filename))
-								uploadedImagesCount++
-							} else {
-								logger.Warning(fmt.Sprintf("No image ID in response for %s", filename))
-
-								// Track skipped image
-								skippedImages = append(skippedImages, SkippedImage{
-									ImagePath:    imagePath,
-									ChapterTitle: chapter.Title,
-									ArticleTitle: article.Title,
-									StepTitle:    step.Title,
-								})
-
-								// Add placeholder alert block
-								placeholderUUID := generateUUID()
-								placeholderBlock := map[string]interface{}{
-									"uuid":          placeholderUUID,
-									"type":          "TextContent",
-									"body":          "<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>",
-									"style":         "alert",
-									"depth":         1,
-									"sort_order":    sortOrder,
-									"anchor_name":   "",
-									"auto_numbered": false,
-									"foldable":      false,
-								}
-								contentBlocks = append(contentBlocks, placeholderBlock)
-
-								// Add to step's content_block_ids
-								if cbIDs, ok := stepBlock["content_block_ids"].([]string); ok {
-									stepBlock["content_block_ids"] = append(cbIDs, placeholderUUID)
-								}
-								sortOrder++
-							}
-						} else {
-							logger.Warning(fmt.Sprintf("Invalid response format for %s", filename))
-
-							// Track skipped image
-							skippedImages = append(skippedImages, SkippedImage{
-								ImagePath:    imagePath,
-								ChapterTitle: chapter.Title,
-								ArticleTitle: article.Title,
-								StepTitle:    step.Title,
-							})
-
-							// Add placeholder alert block
-							placeholderUUID := generateUUID()
-							placeholderBlock := map[string]interface{}{
-								"uuid":          placeholderUUID,
-								"type":          "TextContent",
-								"body":          "<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>",
-								"style":         "alert",
-								"depth":         1,
-								"sort_order":    sortOrder,
-								"anchor_name":   "",
-								"auto_numbered": false,
-								"foldable":      false,
-							}
-							contentBlocks = append(contentBlocks, placeholderBlock)
-
-							// Add to step's content_block_ids
-							if cbIDs, ok := stepBlock["content_block_ids"].([]string); ok {
-								stepBlock["content_block_ids"] = append(cbIDs, placeholderUUID)
-							}
-							sortOrder++
-						}
-					} else {
-						logger.Warning(fmt.Sprintf("Image not found, skipping: %s (Referenced in: %s → article: %s → step: %s)",
-							imagePath, chapter.Title, article.Title, step.Title))
-
-						// Track skipped image
-						skippedImages = append(skippedImages, SkippedImage{
-							ImagePath:    imagePath,
-							ChapterTitle: chapter.Title,
-							ArticleTitle: article.Title,
-							StepTitle:    step.Title,
-						})
-
-						// Add placeholder alert block for missing image
-						placeholderUUID := generateUUID()
-						placeholderBlock := map[string]interface{}{
-							"uuid":          placeholderUUID,
-							"type":          "TextContent",
-							"body":          "<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>",
-							"style":         "alert",
-							"depth":         1,
-							"sort_order":    sortOrder,
-							"anchor_name":   "",
-							"auto_numbered": false,
-							"foldable":      false,
-						}
-						contentBlocks = append(contentBlocks, placeholderBlock)
-
-						// Add to step's content_block_ids
-						if cbIDs, ok := stepBlock["content_block_ids"].([]string); ok {
-							stepBlock["content_block_ids"] = append(cbIDs, placeholderUUID)
-						}
+						contentBlocks = append(contentBlocks, textBlock)
+						stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), textUUID)
 						sortOrder++
 					}
+
+					// 2. Process the special block itself
+					blockHTML := step.Content[start:end]
+
+					if strings.HasPrefix(blockHTML, "<img") {
+						// Image Block
+						imgMatches := imgTagRegex.FindStringSubmatch(blockHTML)
+						if len(imgMatches) > 1 {
+							src := html.UnescapeString(imgMatches[1])
+							srcPath := src
+							if idx := strings.Index(src, "?"); idx != -1 {
+								srcPath = src[:idx]
+							}
+							filename := filepath.Base(srcPath)
+
+							imagePath := filepath.Join(imagesDir, filename)
+							if _, err := os.Stat(imagePath); err == nil {
+								imageResponse, err := api.UploadImage(siteID, fmt.Sprintf("%d", articleID), imagePath)
+								if err != nil {
+									logger.Warning(fmt.Sprintf("Failed to upload image %s: %v", filename, err))
+									skippedImages = append(skippedImages, SkippedImage{
+										ImagePath: imagePath, ChapterTitle: chapter.Title, ArticleTitle: article.Title, StepTitle: step.Title,
+									})
+								} else if fileData, ok := imageResponse["file"].(map[string]interface{}); ok {
+									if imageAssetID, ok := fileData["id"].(float64); ok {
+										// Create ImageContentBlock
+										imageUUID := generateUUID()
+										imageBlock := map[string]interface{}{
+											"uuid": imageUUID, "type": "ImageContentBlock", "asset_file_name": filename, "image_asset_id": int(imageAssetID),
+											"width": int(fileData["width"].(float64)), "height": int(fileData["height"].(float64)), "depth": 1, "sort_order": sortOrder,
+											"alt_tag": "", "url": fileData["url"].(string),
+										}
+										contentBlocks = append(contentBlocks, imageBlock)
+										stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), imageUUID)
+										sortOrder++
+										uploadedImagesCount++
+									}
+								}
+							} else {
+								logger.Warning(fmt.Sprintf("Image not found, skipping: %s", imagePath))
+								skippedImages = append(skippedImages, SkippedImage{
+									ImagePath: imagePath, ChapterTitle: chapter.Title, ArticleTitle: article.Title, StepTitle: step.Title,
+								})
+							}
+						}
+					} else if strings.HasPrefix(blockHTML, `<div class="html-embed"`) {
+						// YouTube Embed Block
+						embedUUID := generateUUID()
+						embedBlock := map[string]interface{}{
+							"uuid": embedUUID, "type": "TextContent", "body": blockHTML, "depth": 1, "sort_order": sortOrder,
+							"style": "html-embed", "show_copy_clipboard": false,
+						}
+						contentBlocks = append(contentBlocks, embedBlock)
+						stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), embedUUID)
+						sortOrder++
+					} else if strings.HasPrefix(blockHTML, `<div class="screensteps-styled-block"`) {
+						// Styled Block
+						styleMatches := styledBlockRegex.FindStringSubmatch(blockHTML)
+						if len(styleMatches) > 2 {
+							style := styleMatches[1]
+							innerBody := styleMatches[2]
+							blockUUID := generateUUID()
+							block := map[string]interface{}{
+								"uuid": blockUUID, "type": "TextContent", "body": innerBody, "depth": 1, "sort_order": sortOrder,
+								"style": style, "show_copy_clipboard": false,
+							}
+							contentBlocks = append(contentBlocks, block)
+							stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), blockUUID)
+							sortOrder++
+						}
+					}
+					lastIndex = end
 				}
 
-				// Process text content (after removing images and embeds)
-				textContent := removeImagesFromHTML(step.Content)
-
-				if strings.TrimSpace(textContent) != "" {
+				// 3. Process any remaining text after the last special block
+				remainingText := step.Content[lastIndex:]
+				plainRemainingText := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(remainingText, "")
+				if strings.TrimSpace(plainRemainingText) != "" {
 					textUUID := generateUUID()
 					textBlock := map[string]interface{}{
-						"uuid":                textUUID,
-						"type":                "TextContent",
-						"body":                textContent,
-						"depth":               1,
-						"sort_order":          sortOrder,
-						"style":               detectStyleFromHTML(textContent),
-						"show_copy_clipboard": false,
+						"uuid": textUUID, "type": "TextContent", "body": remainingText, "depth": 1, "sort_order": sortOrder,
+						"style": nil, "show_copy_clipboard": false,
 					}
 					contentBlocks = append(contentBlocks, textBlock)
-
-					// Add to step's content_block_ids
-					if cbIDs, ok := stepBlock["content_block_ids"].([]string); ok {
-						stepBlock["content_block_ids"] = append(cbIDs, textUUID)
-					}
+					stepBlock["content_block_ids"] = append(stepBlock["content_block_ids"].([]string), textUUID)
 					sortOrder++
 				}
 			}
@@ -1987,6 +1980,35 @@ func removeYouTubeEmbedsFromHTML(htmlContent string) string {
 	return re.ReplaceAllString(htmlContent, "")
 }
 
+func extractStyledBlocksFromHTML(htmlContent string) []map[string]string {
+	if htmlContent == "" {
+		return nil
+	}
+	// Regex to find all screensteps-styled-block divs and capture the data-style and inner HTML
+	re := regexp.MustCompile(`(?s)<div class="screensteps-styled-block" data-style="([^"]+)">(.*?)</div>`)
+	matches := re.FindAllStringSubmatch(htmlContent, -1)
+
+	var styledBlocks []map[string]string
+	for _, match := range matches {
+		if len(match) == 3 {
+			styledBlocks = append(styledBlocks, map[string]string{
+				"style": match[1],
+				"html":  match[2],
+			})
+		}
+	}
+	return styledBlocks
+}
+
+func removeStyledBlocksFromHTML(htmlContent string) string {
+	if htmlContent == "" {
+		return ""
+	}
+	// Regex to remove all screensteps-styled-block divs
+	re := regexp.MustCompile(`(?s)<div class="screensteps-styled-block"[^>]*>.*?</div>`)
+	return re.ReplaceAllString(htmlContent, "")
+}
+
 func detectStyleFromHTML(htmlContent string) string {
 	// Detect ScreenSteps styles from VLP HTML div classes
 	if strings.Contains(htmlContent, "block-style-introduction") {
@@ -2023,6 +2045,7 @@ func main() {
 		user         string
 		token        string
 		siteID       string
+		suffix       bool
 	)
 
 	rootCmd := &cobra.Command{
@@ -2120,7 +2143,7 @@ License: MIT`,
 					os.Exit(1)
 				}
 
-				if err := UploadToScreenSteps(outputPath, account, user, token, siteID, logger); err != nil {
+				if err := UploadToScreenSteps(outputPath, account, user, token, siteID, logger, suffix); err != nil {
 					logger.Error(fmt.Sprintf("Upload failed: %v", err))
 					os.Exit(1)
 				}
@@ -2138,6 +2161,7 @@ License: MIT`,
 	rootCmd.Flags().StringVar(&user, "user", "", "ScreenSteps user ID")
 	rootCmd.Flags().StringVar(&token, "token", "", "ScreenSteps API token")
 	rootCmd.Flags().StringVar(&siteID, "site", "", "ScreenSteps site ID")
+	rootCmd.Flags().BoolVar(&suffix, "suffix", false, "Append -go to manual titles")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

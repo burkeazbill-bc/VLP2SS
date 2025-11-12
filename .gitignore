@@ -127,6 +127,7 @@ tmp/
 # Output directories
 output/
 out/
+build-docs/
 
 # Log files
 logs/

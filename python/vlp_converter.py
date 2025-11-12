@@ -24,6 +24,7 @@ from html import unescape
 import uuid
 from bs4 import BeautifulSoup
 from PIL import Image
+from bs4 import Tag # Added this import for Tag type hinting
 
 # ANSI color codes for terminal output
 class Colors:
@@ -473,11 +474,11 @@ class VLPParser:
             # Map of VLP CSS classes to HTML tags
             # c5 is commonly used for bold/strong text in VLP exports
             class_to_tag_map = {
-                'c5': 'strong',
+                'c0': 'strong',
                 'c3': 'strong',
-                'c4': 'em',
+                'c5': 'strong',
                 'c6': 'code',
-                'c7': 'u',
+                'c7': 'strong',
             }
             
             # Find all span elements with class attributes
@@ -488,10 +489,14 @@ class VLPParser:
                 
                 # Check if any class matches our mapping
                 replacement_tag = None
-                for cls in classes:
-                    if cls in class_to_tag_map:
-                        replacement_tag = class_to_tag_map[cls]
-                        break
+                # Prioritize 'c5' (strong) over other classes if present
+                if 'c5' in classes:
+                    replacement_tag = 'strong'
+                else:
+                    for cls in classes:
+                        if cls in class_to_tag_map:
+                            replacement_tag = class_to_tag_map[cls]
+                            break
                 
                 if replacement_tag:
                     # Create new tag with the same content
@@ -506,18 +511,105 @@ class VLPParser:
                     if span.string:
                         span.unwrap()
             
-            # Convert back to string
-            result = str(soup)
+            # Convert back to string first
+            html = str(soup)
+            
+            # Convert VLP paragraph classes to ScreenSteps formatted blocks
+            html = self._convert_vlp_paragraph_styles(html)
+            
+            # Use the result from paragraph styles conversion
+            result = html
             
             # Clean up any remaining empty spans
             result = re.sub(r'<span[^>]*>\s*</span>', '', result)
             
+            # Normalize <ol> start attributes
+            soup = BeautifulSoup(result, 'html.parser')
+            for ol_tag in soup.find_all('ol'):
+                if ol_tag.has_attr('start'):
+                    del ol_tag['start']
+            result = str(soup)
+
             return result
             
         except Exception as e:
             # If parsing fails, return original HTML
             self.logger.warning(f"Failed to parse HTML for formatting conversion: {e}")
             return html
+    
+    def _convert_vlp_paragraph_styles(self, html_content: str) -> str:
+        """Convert VLP paragraph classes to ScreenSteps formatted blocks."""
+        if not html_content:
+            return ""
+
+        p_class_to_style_map = {
+            'c10': 'introduction',
+            'c44': 'introduction',
+            'c48': 'info',
+            # Add other mappings here as they are identified
+        }
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+        # Use a copy of the list of tags to iterate over, as we are modifying the tree
+        # Filter to ensure only valid Tag objects are included
+        all_p_tags = [p for p in soup.find_all('p') if p is not None and isinstance(p, Tag)]
+        processed_tags = set()
+
+        for p_class, style in p_class_to_style_map.items():
+            # Find all tags with the current class
+            tags_with_class = [
+                p for p in all_p_tags 
+                if p_class in p.get('class', []) and p not in processed_tags
+            ]
+            
+            i = 0
+            while i < len(tags_with_class):
+                start_tag = tags_with_class[i]
+                if start_tag in processed_tags:
+                    i += 1
+                    continue
+
+                group = [start_tag]
+                processed_tags.add(start_tag)
+                
+                # Find consecutive siblings with the same class
+                next_sibling = start_tag.find_next_sibling()
+                while next_sibling and isinstance(next_sibling, Tag) and next_sibling.has_attr('class') and p_class in next_sibling.get('class', []):
+                    if next_sibling in processed_tags:
+                        break # Stop if we hit a tag that's already part of another group
+                    group.append(next_sibling)
+                    processed_tags.add(next_sibling)
+                    next_sibling = next_sibling.find_next_sibling()
+
+                # Filter out empty paragraphs and paragraphs that contain ONLY images (no text)
+                # Styled blocks should only contain text content, not standalone images
+                content_tags = [p for p in group if p and p.get_text(strip=True)]
+                
+                if content_tags:
+                    # Create the styled div and insert it into the tree *before* the start tag.
+                    styled_div = soup.new_tag('div', **{
+                        'class': 'screensteps-styled-block',
+                        'data-style': style
+                    })
+                    start_tag.insert_before(styled_div)
+
+                    # Move the content tags into the new div
+                    for tag in content_tags:
+                        if tag and tag.parent:  # Only extract if tag is valid and still in tree
+                            styled_div.append(tag.extract())
+                
+                # Decompose only truly empty tags (no text and no images)
+                # Leave image-only paragraphs in place so they can be processed as separate content blocks
+                for tag in group:
+                    if tag and tag.parent and tag not in content_tags:
+                        # Only decompose if the tag has no images
+                        if not tag.find('img'):
+                            tag.decompose()
+                
+                # Move to the next unprocessed tag
+                i += len(group)
+                
+        return str(soup)
     
     def _convert_youtube_embeds(self, soup: BeautifulSoup) -> None:
         """Convert VLP YouTube embed divs to ScreenSteps iframe format"""

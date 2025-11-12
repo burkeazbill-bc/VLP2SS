@@ -4,7 +4,7 @@ ScreenSteps API Uploader
 Uploads converted VLP content to ScreenSteps via API
 
 Author: Burke Azbill
-Version: 1.0.1
+Version: 1.0.2
 """
 
 import sys
@@ -22,6 +22,7 @@ import uuid
 import re
 from bs4 import BeautifulSoup
 from PIL import Image
+from html import unescape
 
 # ANSI color codes for terminal output
 class Colors:
@@ -76,6 +77,35 @@ def remove_images_from_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     for img in soup.find_all('img'):
         img.decompose()
+    return str(soup)
+
+def extract_styled_blocks_from_html(html_content: str) -> List[Dict]:
+    """Extract ScreenSteps-styled HTML blocks and their content."""
+    if not html_content:
+        return []
+    
+    soup = BeautifulSoup(html_content, 'html.parser')
+    styled_blocks = []
+    
+    # Find all divs with class 'screensteps-styled-block'
+    for div in soup.find_all('div', class_='screensteps-styled-block'):
+        style = div.get('data-style')
+        if style:
+            styled_blocks.append({
+                'style': style,
+                'html': str(div.decode_contents()) # Get inner HTML
+            })
+    
+    return styled_blocks
+
+def remove_styled_blocks_from_html(html_content: str) -> str:
+    """Remove ScreenSteps-styled HTML blocks from HTML."""
+    if not html_content:
+        return ""
+    
+    soup = BeautifulSoup(html_content, 'html.parser')
+    for div in soup.find_all('div', class_='screensteps-styled-block'):
+        div.decompose()
     return str(soup)
 
 def extract_youtube_embeds(html_content):
@@ -289,8 +319,8 @@ class ScreenStepsAPI:
         return response.json().get('article', {})
     
     def upload_image(self, site_id: str, article_id: str, 
-                    image_path: Path) -> Dict:
-        f"""
+                   image_path: Path) -> Dict:
+        """
         Upload an image using the ScreenSteps Files API
         Reference: https://help.screensteps.com/a/1540764-creating-images-or-file-attachments-via-the-public-api
         
@@ -309,13 +339,12 @@ class ScreenStepsAPI:
             
             # Use the _request method which handles rate limiting
             response = self._request('POST', f'sites/{site_id}/files', 
-                                    files=files)
+                                   files=files)
             
             # Add delay after successful upload
             # ScreenSteps rate limit: 8 files per 10 seconds for image uploads
             time.sleep(1.25)
             return response.json()
-                
     
     def update_article_contents(self, site_id: str, article_id: str, 
                                title: str, content_blocks: List[Dict], 
@@ -364,171 +393,116 @@ class ScreenStepsAPI:
             }
             content_blocks.append(step_block)
             sort_order += 1
-            
-            # Extract and upload images
+
+            # New sequential parsing logic to preserve content order
             html_content = step.get('content', '')
-            images = extract_images_from_html(html_content)
             
-            # Extract YouTube embeds
-            youtube_embeds = extract_youtube_embeds(html_content)
+            block_regex = re.compile(r'(<div class="html-embed">.*?</div>|<div class="screensteps-styled-block".*?>.*?</div>|<img[^>]+src="[^"]+"[^>]*>)', re.DOTALL)
             
-            for img_data in images:
-                # Find image file in article-specific directory
-                image_path = article_images_dir / img_data['filename']
-                if image_path.exists():
-                    try:
-                        # Upload image
-                        image_response = self.upload_image(site_id, article_id, image_path)
+            last_index = 0
+            
+            for match in block_regex.finditer(html_content):
+                start, end = match.span()
+                
+                # 1. Process text before the special block
+                text_before = html_content[last_index:start]
+                plain_text_before = re.sub(r'<[^>]+>', '', text_before).strip()
+                if plain_text_before:
+                    text_uuid = generate_uuid()
+                    text_block = {
+                        'uuid': text_uuid, 'type': 'TextContent', 'body': text_before, 'depth': 1, 
+                        'sort_order': sort_order, 'style': None, 'show_copy_clipboard': False
+                    }
+                    content_blocks.append(text_block)
+                    step_block['content_block_ids'].append(text_uuid)
+                    sort_order += 1
+                
+                # 2. Process the special block itself
+                block_html = match.group(0)
+                
+                if block_html.startswith('<img'):
+                    img_match = re.search(r'<img[^>]+src="([^"]+)"', block_html)
+                    if img_match:
+                        src = unescape(img_match.group(1))
+                        filename = src.split('/')[-1].split('?')[0]
+                        image_path = article_images_dir / filename
                         
-                        # Parse response: {"file": {"id": 9752430, "width": 404, "height": 310, "url": "...", ...}}
-                        file_data = image_response.get('file', {})
-                        image_asset_id = file_data.get('id')
-                        
-                        if image_asset_id:
-                            # Get image dimensions from API response
-                            width = file_data.get('width', 800)
-                            height = file_data.get('height', 600)
-                            url = file_data.get('url', '')
-                            
-                            # Create ImageContentBlock
-                            image_uuid = generate_uuid()
-                            image_block = {
-                                'uuid': image_uuid,
-                                'type': 'ImageContentBlock',
-                                'asset_file_name': img_data['filename'],
-                                'image_asset_id': image_asset_id,
-                                'width': width,
-                                'height': height,
-                                'depth': 1,
-                                'sort_order': sort_order,
-                                'alt_tag': img_data.get('alt', ''),
-                                'url': url  # Include URL from API response
-                            }
-                            content_blocks.append(image_block)
-                            step_block['content_block_ids'].append(image_uuid)
-                            sort_order += 1
-                            
-                            # Increment uploaded images counter
-                            uploaded_images_count[0] += 1
-                            
-                            # Log successful upload (using info since debug may not be available)
-                            if hasattr(self, 'logger') and self.logger:
-                                if hasattr(self.logger, 'debug'):
-                                    self.logger.debug(f"Uploaded image: {img_data['filename']} (ID: {image_asset_id})")
+                        image_processed = False
+                        if image_path.exists():
+                            try:
+                                image_response = self.upload_image(site_id, article_id, image_path)
+                                if image_response and 'file' in image_response and 'id' in image_response['file']:
+                                    # ... (code to create image_block) ...
+                                    image_asset_id = image_response['file']['id']
+                                    image_uuid = generate_uuid()
+                                    image_block = {
+                                        'uuid': image_uuid, 'type': 'ImageContentBlock', 'asset_file_name': filename,
+                                        'image_asset_id': image_asset_id, 'width': image_response['file'].get('width', 800),
+                                        'height': image_response['file'].get('height', 600), 'depth': 1, 'sort_order': sort_order,
+                                        'alt_tag': "", 'url': image_response['file'].get('url', '')
+                                    }
+                                    content_blocks.append(image_block)
+                                    step_block['content_block_ids'].append(image_uuid)
+                                    sort_order += 1
+                                    uploaded_images_count[0] += 1
+                                    image_processed = True
                                 else:
-                                    self.logger.info(f"Uploaded image: {img_data['filename']} (ID: {image_asset_id})")
+                                    self.logger.warning(f"Invalid API response for image {filename}")
+                            except Exception as e:
+                                self.logger.warning(f"Failed to upload image {filename}: {e}")
                         else:
-                            # No image ID in response - add placeholder
-                            self.warning(f"No image ID in response for {img_data['filename']}")
+                             self.logger.warning(f"Image not found, skipping: {image_path}")
+
+                        if not image_processed:
+                            # Add placeholder alert block if image failed to process
                             skipped_images.append({
-                                'image_path': str(image_path),
-                                'chapter_title': chapter_title,
-                                'article_title': article_data.get('title', 'Unknown'),
-                                'step_title': step.get('title', 'Unknown')
+                                'image_path': str(image_path), 'chapter_title': chapter_title, 
+                                'article_title': article_data.get('title', 'Unknown'), 'step_title': step.get('title', 'Unknown')
                             })
-                            
-                            # Add placeholder alert block
                             placeholder_uuid = generate_uuid()
                             placeholder_block = {
-                                'uuid': placeholder_uuid,
-                                'type': 'TextContent',
-                                'body': '<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>',
-                                'style': 'alert',
-                                'depth': 1,
-                                'sort_order': sort_order,
-                                'anchor_name': '',
-                                'auto_numbered': False,
-                                'foldable': False
+                                'uuid': placeholder_uuid, 'type': 'TextContent', 'body': '<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>',
+                                'style': 'alert', 'depth': 1, 'sort_order': sort_order, 'anchor_name': '', 
+                                'auto_numbered': False, 'foldable': False
                             }
                             content_blocks.append(placeholder_block)
                             step_block['content_block_ids'].append(placeholder_uuid)
                             sort_order += 1
-                    except Exception as e:
-                        # Failed to upload - add placeholder
-                        self.warning(f"Failed to upload image {img_data['filename']}: {e}")
-                        skipped_images.append({
-                            'image_path': str(image_path),
-                            'chapter_title': chapter_title,
-                            'article_title': article_data.get('title', 'Unknown'),
-                            'step_title': step.get('title', 'Unknown')
-                        })
-                        
-                        # Add placeholder alert block
-                        placeholder_uuid = generate_uuid()
-                        placeholder_block = {
-                            'uuid': placeholder_uuid,
-                            'type': 'TextContent',
-                            'body': '<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>',
-                            'style': 'alert',
-                            'depth': 1,
-                            'sort_order': sort_order,
-                            'anchor_name': '',
-                            'auto_numbered': False,
-                            'foldable': False
-                        }
-                        content_blocks.append(placeholder_block)
-                        step_block['content_block_ids'].append(placeholder_uuid)
-                        sort_order += 1
-                else:
-                    # Image not found - add placeholder
-                    self.logger.warning(f"Image not found, skipping: {image_path} (Referenced in: {chapter_title} → article: {article_data.get('title', 'Unknown')} → step: {step.get('title', 'Unknown')})")
-                    skipped_images.append({
-                        'image_path': str(image_path),
-                        'chapter_title': chapter_title,
-                        'article_title': article_data.get('title', 'Unknown'),
-                        'step_title': step.get('title', 'Unknown')
-                    })
-                    
-                    # Add placeholder alert block
-                    placeholder_uuid = generate_uuid()
-                    placeholder_block = {
-                        'uuid': placeholder_uuid,
-                        'type': 'TextContent',
-                        'body': '<p>ERROR IMPORTING IMAGE - PLEASE RE-CREATE SCREENSHOT</p>',
-                        'style': 'alert',
-                        'depth': 1,
-                        'sort_order': sort_order,
-                        'anchor_name': '',
-                        'auto_numbered': False,
-                        'foldable': False
+
+                elif block_html.startswith('<div class="html-embed"'):
+                    embed_uuid = generate_uuid()
+                    embed_block = {
+                        'uuid': embed_uuid, 'type': 'TextContent', 'body': block_html, 'depth': 1,
+                        'sort_order': sort_order, 'style': 'html-embed', 'show_copy_clipboard': False
                     }
-                    content_blocks.append(placeholder_block)
-                    step_block['content_block_ids'].append(placeholder_uuid)
+                    content_blocks.append(embed_block)
+                    step_block['content_block_ids'].append(embed_uuid)
                     sort_order += 1
-            
-            # Process YouTube embeds - create separate html-embed content blocks
-            for youtube_embed in youtube_embeds:
-                embed_uuid = generate_uuid()
-                embed_block = {
-                    'uuid': embed_uuid,
-                    'type': 'TextContent',
-                    'body': youtube_embed['html'],
-                    'depth': 1,
-                    'sort_order': sort_order,
-                    'style': 'html-embed',
-                    'show_copy_clipboard': False
-                }
-                content_blocks.append(embed_block)
-                step_block['content_block_ids'].append(embed_uuid)
-                sort_order += 1
-            
-            # Remove images and YouTube embeds from HTML and detect style
-            text_html = remove_images_from_html(html_content)
-            text_html = remove_youtube_embeds_from_html(text_html)
-            style = detect_style_from_html(text_html)
-            text_html = remove_style_divs(text_html)
-            
-            # Create TextContent block
-            if text_html.strip():
+                    
+                elif block_html.startswith('<div class="screensteps-styled-block"'):
+                    style_match = re.search(r'data-style="([^"]+)"[^>]*>(.*)</div>', block_html, re.DOTALL)
+                    if style_match:
+                        style = style_match.group(1)
+                        inner_body = style_match.group(2)
+                        block_uuid = generate_uuid()
+                        block = {
+                            'uuid': block_uuid, 'type': 'TextContent', 'body': inner_body, 'depth': 1,
+                            'sort_order': sort_order, 'style': style, 'show_copy_clipboard': False
+                        }
+                        content_blocks.append(block)
+                        step_block['content_block_ids'].append(block_uuid)
+                        sort_order += 1
+
+                last_index = end
+
+            # 3. Process any remaining text after the last special block
+            remaining_text = html_content[last_index:]
+            plain_remaining_text = re.sub(r'<[^>]+>', '', remaining_text).strip()
+            if plain_remaining_text:
                 text_uuid = generate_uuid()
                 text_block = {
-                    'uuid': text_uuid,
-                    'type': 'TextContent',
-                    'body': text_html,
-                    'depth': 1,
-                    'sort_order': sort_order,
-                    'style': style,
-                    'show_copy_clipboard': False
+                    'uuid': text_uuid, 'type': 'TextContent', 'body': remaining_text, 'depth': 1,
+                    'sort_order': sort_order, 'style': None, 'show_copy_clipboard': False
                 }
                 content_blocks.append(text_block)
                 step_block['content_block_ids'].append(text_uuid)
@@ -539,7 +513,7 @@ class ScreenStepsAPI:
 class ScreenStepsUploader:
     """Upload converted content to ScreenSteps"""
     
-    def __init__(self, account: str, user: str, token: str, verbose: bool = False):
+    def __init__(self, account: str, user: str, token: str, verbose: bool = False, suffix: bool = False):
         self.verbose = verbose
         self.setup_logging(verbose)
         self.logger = logging.getLogger(__name__)
@@ -557,6 +531,7 @@ class ScreenStepsUploader:
         self.current_article = 0
         self.processed_articles = 0
         self.processed_images = 0
+        self.suffix = suffix
     
     def setup_logging(self, verbose: bool):
         """Configure logging"""
@@ -802,9 +777,12 @@ class ScreenStepsUploader:
             
             # Create manual with all chapters in one call
             # Manual is unpublished, but chapters remain published
+            manual_title = manual_info['title']
+            if self.suffix:
+                manual_title += "-python"
             manual = self.api.create_manual(
                 site_id,
-                manual_info['title'],
+                manual_title,
                 chapters=chapters_array,
                 published=False  # Manual unpublished for review
             )
@@ -1033,6 +1011,8 @@ def main():
                        version='VLP2SS - The VLP to ScreenSteps Uploader\nVersion: 1.0.2\nAuthor: Burke Azbill\nLicense: MIT')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
+    parser.add_argument('--suffix', action='store_true',
+                       help='Append -python suffix to manual titles')
     
     args = parser.parse_args()
     
@@ -1063,7 +1043,8 @@ def main():
             args.account,
             args.user,
             args.token,
-            verbose=args.verbose
+            verbose=args.verbose,
+            suffix=args.suffix
         )
         
         uploader.upload(
