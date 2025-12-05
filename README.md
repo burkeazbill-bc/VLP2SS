@@ -342,6 +342,7 @@ Areas for improvement:
 ### Known Issues
 
 - Not all ScreenSteps accounts are enabled for image/file upload
+- In some cases, the Google Docs styling is not consistent so some text may end up bold while other text does not. This has been seen frequently. Some Lab Manuals don't have this happen at all, while others do.
 
 ### Getting Help
 
