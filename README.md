@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/) [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://golang.org/) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Version:** 1.0.2  
+**Version:** 1.0.3  
 **Author:** Burke Azbill  
 **License:** MIT
 
@@ -379,6 +379,10 @@ All dependencies are used in compliance with their respective licenses.
 
 ## 📝 Version History
 
+- **v1.0.3** (2025-12-05)
+  - Implemented conversion for nested ordered lists (a, b, c...).
+  - Added support for "info" styled text blocks.
+  - Fixed `--version` flag to display current version.
 - **v1.0.2** (2025-11-11)
   - Added progress tracking output to logging (percentages and ETA)
 - **v1.0.1** (2025-11-11)
@@ -437,7 +441,7 @@ For more details, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Status**: ✅ Production Ready
 
-**Last Updated**: November 11, 2025
+**Last Updated**: December 05, 2025
 
 **Author**: Burke Azbill
 

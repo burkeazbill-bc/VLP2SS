@@ -204,8 +204,10 @@ docker-compose.override.yml
 
 # Keep these directories but ignore their contents
 python/output/.gitkeep
-bash/output/.gitkeep
 golang/output/.gitkeep
+python/logs/.gitkeep
+golang/logs/.gitkeep
+
 
 # Keep example files
 !examples/*.zip

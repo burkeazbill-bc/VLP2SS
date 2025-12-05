@@ -4,7 +4,7 @@ VLP to ScreenSteps Converter
 Converts VMware Lab Platform (VLP) exported content to ScreenSteps format
 
 Author: Burke Azbill
-Version: 1.0.2
+Version: 1.0.3
 """
 
 import sys
@@ -25,6 +25,9 @@ import uuid
 from bs4 import BeautifulSoup
 from PIL import Image
 from bs4 import Tag # Added this import for Tag type hinting
+
+# --- Constants ---
+APP_VERSION = "1.0.3"
 
 # ANSI color codes for terminal output
 class Colors:
@@ -200,9 +203,11 @@ def extract_images_from_html(html_content):
         if src:
             # Extract filename from path like './images/filename.png'
             # Remove query parameters (e.g., '?X-Amz-Algorithm=...')
-            filename = src.split('/')[-1].split('?')[0]
+            # Ensure src is a string
+            src_str = str(src) if not isinstance(src, str) else src
+            filename = src_str.split('/')[-1].split('?')[0]
             images.append({
-                'src': src,
+                'src': src_str,
                 'filename': filename,
                 'alt': img.get('alt', '')
             })
@@ -234,9 +239,11 @@ def detect_style_from_html(html_content):
     
     soup = BeautifulSoup(html_content, 'html.parser')
     for div in soup.find_all('div', class_=True):
-        for class_name in div.get('class', []):
-            if class_name in style_map:
-                return style_map[class_name]
+        div_classes = div.get('class')
+        if div_classes:
+            for class_name in div_classes:
+                if class_name in style_map:
+                    return style_map[class_name]
     
     return None
 
@@ -483,7 +490,7 @@ class VLPParser:
             
             # Find all span elements with class attributes
             for span in soup.find_all('span', class_=True):
-                classes = span.get('class', [])
+                classes = span.get('class')
                 if not classes:
                     continue
                 
@@ -523,11 +530,28 @@ class VLPParser:
             # Clean up any remaining empty spans
             result = re.sub(r'<span[^>]*>\s*</span>', '', result)
             
-            # Normalize <ol> start attributes
+            # Normalize <ol> start attributes and handle nested lists
             soup = BeautifulSoup(result, 'html.parser')
             for ol_tag in soup.find_all('ol'):
                 if ol_tag.has_attr('start'):
                     del ol_tag['start']
+                
+                # Handle nested list types based on Google Docs classes (lst-kix_...-N)
+                # Level 0 is default (1, 2, 3...)
+                # Level 1 should be alpha (a, b, c...)
+                # Level 2 should be roman (i, ii, iii...)
+                classes = ol_tag.get('class')
+                if classes:
+                    for cls in classes:
+                        if 'lst-kix_' in cls:
+                            if cls.endswith('-1'):
+                                ol_tag['type'] = 'a'
+                                # Add margin to simulate nesting since they are often separate blocks
+                                # Force list style type via CSS as HTML attribute is often overridden
+                                ol_tag['style'] = 'margin-left: 40px; list-style-type: lower-latin;'
+                            elif cls.endswith('-2'):
+                                ol_tag['type'] = 'i'
+                                ol_tag['style'] = 'margin-left: 80px; list-style-type: upper-latin;'
             result = str(soup)
 
             return result
@@ -546,6 +570,8 @@ class VLPParser:
             'c10': 'introduction',
             'c44': 'introduction',
             'c48': 'info',
+            'c28': 'info',
+            'c39': 'info',
             # Add other mappings here as they are identified
         }
 
@@ -559,7 +585,7 @@ class VLPParser:
             # Find all tags with the current class
             tags_with_class = [
                 p for p in all_p_tags 
-                if p_class in p.get('class', []) and p not in processed_tags
+                if (p_classes := p.get('class')) and p_class in p_classes and p not in processed_tags
             ]
             
             i = 0
@@ -574,12 +600,16 @@ class VLPParser:
                 
                 # Find consecutive siblings with the same class
                 next_sibling = start_tag.find_next_sibling()
-                while next_sibling and isinstance(next_sibling, Tag) and next_sibling.has_attr('class') and p_class in next_sibling.get('class', []):
-                    if next_sibling in processed_tags:
-                        break # Stop if we hit a tag that's already part of another group
-                    group.append(next_sibling)
-                    processed_tags.add(next_sibling)
-                    next_sibling = next_sibling.find_next_sibling()
+                while next_sibling and isinstance(next_sibling, Tag) and next_sibling.has_attr('class'):
+                    sibling_classes = next_sibling.get('class')
+                    if sibling_classes and p_class in sibling_classes:
+                        if next_sibling in processed_tags:
+                            break # Stop if we hit a tag that's already part of another group
+                        group.append(next_sibling)
+                        processed_tags.add(next_sibling)
+                        next_sibling = next_sibling.find_next_sibling()
+                    else:
+                        break
 
                 # Filter out empty paragraphs and paragraphs that contain ONLY images (no text)
                 # Styled blocks should only contain text content, not standalone images
@@ -587,10 +617,9 @@ class VLPParser:
                 
                 if content_tags:
                     # Create the styled div and insert it into the tree *before* the start tag.
-                    styled_div = soup.new_tag('div', **{
-                        'class': 'screensteps-styled-block',
-                        'data-style': style
-                    })
+                    styled_div = soup.new_tag('div')
+                    styled_div['class'] = 'screensteps-styled-block'
+                    styled_div['data-style'] = style
                     start_tag.insert_before(styled_div)
 
                     # Move the content tags into the new div
@@ -622,27 +651,29 @@ class VLPParser:
             
             if not video_id:
                 # Try to extract from data-thumb-url as fallback
-                thumb_url = youtube_div.get('data-thumb-url', '')
-                match = re.search(r'youtube\.com/vi/([^/]+)/', thumb_url)
-                if match:
-                    video_id = match.group(1)
+                thumb_url = youtube_div.get('data-thumb-url')
+                if thumb_url:
+                    thumb_url_str = str(thumb_url) if not isinstance(thumb_url, str) else thumb_url
+                    match = re.search(r'youtube\.com/vi/([^/]+)/', thumb_url_str)
+                    if match:
+                        video_id = match.group(1)
             
             if video_id:
                 # Create the ScreenSteps-compatible HTML embed structure
                 # Outer div with html-embed class (no tabindex, no wrapper div)
-                outer_div = soup.new_tag('div', **{'class': 'html-embed'})
+                outer_div = soup.new_tag('div')
+                outer_div['class'] = 'html-embed'
                 
                 # Create the iframe directly inside html-embed div
-                iframe = soup.new_tag('iframe', **{
-                    'width': '560',
-                    'height': '315',
-                    'src': f'https://www.youtube.com/embed/{video_id}',
-                    'title': 'YouTube video player',
-                    'frameborder': '0',
-                    'allow': 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
-                    'referrerpolicy': 'strict-origin-when-cross-origin',
-                    'allowfullscreen': ''
-                })
+                iframe = soup.new_tag('iframe')
+                iframe['width'] = '560'
+                iframe['height'] = '315'
+                iframe['src'] = f'https://www.youtube.com/embed/{video_id}'
+                iframe['title'] = 'YouTube video player'
+                iframe['frameborder'] = '0'
+                iframe['allow'] = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+                iframe['referrerpolicy'] = 'strict-origin-when-cross-origin'
+                iframe['allowfullscreen'] = ''
                 
                 # Assemble the structure
                 outer_div.append(iframe)
@@ -969,7 +1000,7 @@ def main():
     parser.add_argument('--no-cleanup', action='store_true',
                        help='Keep temporary files after conversion')
     parser.add_argument('--version', action='version',
-                       version='VLP2SS - The VLP to ScreenSteps Converter\nVersion: 1.0.2\nAuthor: Burke Azbill\nLicense: MIT')
+                       version=f'vlp2ss-py v{APP_VERSION}')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
     
@@ -984,6 +1015,12 @@ def main():
         print("\n" + "="*70)
         print_usage_examples()
         return 0
+    
+    # --- Print Header ---
+    print(f"{Colors.BOLD}{Colors.HEADER}{'='*70}{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.HEADER}{'VLP to ScreenSteps Converter'.center(70)}{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.HEADER}{f'Version: {APP_VERSION}'.center(70)}{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.HEADER}{'='*70}{Colors.ENDC}\n")
     
     try:
         start_time = time.time()

@@ -4,7 +4,7 @@ ScreenSteps API Uploader
 Uploads converted VLP content to ScreenSteps via API
 
 Author: Burke Azbill
-Version: 1.0.2
+Version: 1.0.3
 """
 
 import sys
@@ -1008,7 +1008,7 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Enable verbose logging')
     parser.add_argument('--version', action='version',
-                       version='VLP2SS - The VLP to ScreenSteps Uploader\nVersion: 1.0.2\nAuthor: Burke Azbill\nLicense: MIT')
+                       version='VLP2SS - The VLP to ScreenSteps Uploader\nVersion: 1.0.3\nAuthor: Burke Azbill\nLicense: MIT')
     parser.add_argument('--examples', action='store_true',
                        help='Show detailed usage examples')
     parser.add_argument('--suffix', action='store_true',

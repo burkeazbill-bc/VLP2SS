@@ -21,6 +21,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const AppVersion = "1.0.3"
+
 // VLP XML Structures
 type Manual struct {
 	XMLName             xml.Name     `xml:"Manual"`
@@ -1186,6 +1188,38 @@ func (c *Converter) convertVLPFormatting(htmlContent string) string {
 	olStartPattern := regexp.MustCompile(`(<ol[^>]*) start="[^"]*"`)
 	htmlContent = olStartPattern.ReplaceAllString(htmlContent, "$1")
 
+	// Handle nested list types based on Google Docs classes (lst-kix_...-N)
+	// Level 0 is default (1, 2, 3...)
+	// Level 1 should be alpha (a, b, c...)
+	// Level 2 should be roman (i, ii, iii...)
+	olPattern := regexp.MustCompile(`<ol[^>]*>`)
+	htmlContent = olPattern.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		if strings.Contains(match, "lst-kix_") {
+			if regexp.MustCompile(`lst-kix_[^"]*-1`).MatchString(match) {
+				// Level 1: Alpha, indented
+				if !strings.Contains(match, "type=") {
+					match = strings.Replace(match, "<ol", `<ol type="a"`, 1)
+				}
+				if !strings.Contains(match, "style=") {
+					match = strings.Replace(match, "<ol", `<ol style="margin-left: 40px; list-style-type: lower-latin;"`, 1)
+				} else {
+					match = strings.Replace(match, `style="`, `style="margin-left: 40px; list-style-type: lower-latin; `, 1)
+				}
+			} else if regexp.MustCompile(`lst-kix_[^"]*-2`).MatchString(match) {
+				// Level 2: Roman, indented more
+				if !strings.Contains(match, "type=") {
+					match = strings.Replace(match, "<ol", `<ol type="i"`, 1)
+				}
+				if !strings.Contains(match, "style=") {
+					match = strings.Replace(match, "<ol", `<ol style="margin-left: 80px; list-style-type: upper-latin;"`, 1)
+				} else {
+					match = strings.Replace(match, `style="`, `style="margin-left: 80px; list-style-type: upper-latin; `, 1)
+				}
+			}
+		}
+		return match
+	})
+
 	return htmlContent
 }
 
@@ -1195,6 +1229,8 @@ func (c *Converter) convertVLPParagraphStyles(htmlContent string) string {
 		"c10": "introduction",
 		"c44": "introduction",
 		"c48": "info",
+		"c28": "info",
+		"c39": "info",
 		// Add other mappings here as they are identified
 	}
 
@@ -1848,69 +1884,91 @@ func findTOCFile(contentDir string) (string, error) {
 }
 
 func printExamples() {
-	examples := `
-╔══════════════════════════════════════════════════════════════════════════╗
-║                         USAGE EXAMPLES                                   ║
-╚══════════════════════════════════════════════════════════════════════════╝
+	boxTop := "╔══════════════════════════════════════════════════════════════════════════╗"
+	boxMid := "║"
+	boxBot := "╚══════════════════════════════════════════════════════════════════════════╝"
+	width := 70
 
-1. Convert a VLP ZIP file:
-   ./vlp2ss -i HOL-2601-03-VCF-L_en.zip -o output/
+	fmt.Println(boxTop)
+	fmt.Printf("%s%s%s\n", boxMid, centerText("VLP2SS USAGE EXAMPLES", width), boxMid)
+	fmt.Println(boxBot)
 
-2. Convert an extracted VLP directory:
-   ./vlp2ss -i VLP-Export-Samples/HOL-2601-03-VCF-L-en/ -o output/
+	examples := []struct {
+		title   string
+		content string
+	}{
+		{
+			"Basic Conversion",
+			"Convert a VLP ZIP file to ScreenSteps format in the 'output' directory.",
+		},
+		{
+			"Verbose Output",
+			"Run conversion with detailed logging, useful for debugging.",
+		},
+		{
+			"Convert and Upload",
+			"Convert and then immediately upload to ScreenSteps. Requires account credentials.",
+		},
+		{
+			"Using Environment Variables",
+			"For security, store credentials in environment variables (SS_ACCOUNT, SS_USER, SS_TOKEN, SS_SITE).",
+		},
+		{
+			"Display Version",
+			"Show the current version of the application.",
+		},
+		{
+			"Building from Source",
+			"Compile the Go binary from the source code. Requires Go to be installed.",
+		},
+		{
+			"Cross-Compilation",
+			"Build the binary for a different operating system (e.g., Windows).",
+		},
+	}
 
-3. Convert with verbose logging:
-   ./vlp2ss -i input.zip -o output/ -v
+	commands := []string{
+		`./vlp2ss -i /path/to/your/lab.zip -o ./output`,
+		`./vlp2ss -i lab.zip -o ./output -v`,
+		`./vlp2ss -i lab.zip -o ./output --upload \
+    --account "your-account" \
+    --user "your-user" \
+    --token "YOUR_API_TOKEN" \
+    --site "12345"`,
+		`export SS_ACCOUNT="your-account"
+  export SS_USER="your-user"
+  export SS_TOKEN="YOUR_API_TOKEN"
+  export SS_SITE="12345"
 
-4. Convert and upload to ScreenSteps:
-   ./vlp2ss -i input.zip -o output/ \
-       --upload \
-       --account myaccount \
-       --user admin \
-       --token YOUR_API_TOKEN \
-       --site 12345
+  ./vlp2ss -i lab.zip -o ./output --upload`,
+		`./vlp2ss --version`,
+		`cd golang
+  go build -o vlp2ss main.go`,
+		`cd golang
+  GOOS=windows GOARCH=amd64 go build -o vlp2ss.exe main.go`,
+	}
 
-5. Keep temporary files for debugging:
-   ./vlp2ss -i input.zip -o output/ --no-cleanup
+	for i, ex := range examples {
+		fmt.Println()
+		fmt.Println(boxTop)
+		fmt.Printf("%s%s%s\n", boxMid, centerText(ex.title, width), boxMid)
+		fmt.Println(boxBot)
+		fmt.Printf("\n  %s\n\n", ex.content)
+		fmt.Println("  ```bash")
+		// Indent command lines
+		for _, line := range strings.Split(commands[i], "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+		fmt.Println("  ```")
+	}
+}
 
-6. Batch convert multiple files:
-   for file in *.zip; do
-       ./vlp2ss -i "$file" -o output/
-   done
-
-╔══════════════════════════════════════════════════════════════════════════╗
-║                         BUILDING FROM SOURCE                             ║
-╚══════════════════════════════════════════════════════════════════════════╝
-
-# Download dependencies
-go mod tidy
-
-# Build the binary
-go build -o vlp2ss main.go
-
-# Or use Makefile
-make build
-
-# Run the converter
-./vlp2ss -i input.zip -o output/
-
-╔══════════════════════════════════════════════════════════════════════════╗
-║                         CROSS-COMPILATION                                ║
-╚══════════════════════════════════════════════════════════════════════════╝
-
-# Build for Linux
-GOOS=linux GOARCH=amd64 go build -o vlp2ss-linux main.go
-
-# Build for Windows
-GOOS=windows GOARCH=amd64 go build -o vlp2ss.exe main.go
-
-# Build for macOS (Intel)
-GOOS=darwin GOARCH=amd64 go build -o vlp2ss-mac-intel main.go
-
-# Build for macOS (Apple Silicon)
-GOOS=darwin GOARCH=arm64 go build -o vlp2ss-mac-arm main.go
-`
-	fmt.Println(examples)
+func centerText(text string, width int) string {
+	if len(text) >= width {
+		return text
+	}
+	padding := (width - len(text)) / 2
+	return strings.Repeat(" ", padding) + text
 }
 
 // Helper functions for content block generation
@@ -2046,22 +2104,26 @@ func main() {
 		token        string
 		siteID       string
 		suffix       bool
+		versionFlag  bool
+		envFile      string
 	)
 
 	rootCmd := &cobra.Command{
 		Use:     "vlp2ss",
 		Short:   "Convert VLP exported content to ScreenSteps format",
-		Version: "1.0.2",
-		Long: `VLP2SS - The VLP to ScreenSteps Converter
-
-This tool converts VMware Lab Platform (VLP) exported content 
-to ScreenSteps format with enhanced logging and progress tracking.
-
-Version: 1.0.2
-Author: Burke Azbill
-License: MIT`,
+		Version: AppVersion,
+		Long: `VLP2SS is a tool for converting VMware Lab Platform (VLP) 
+exported content into a format compatible with ScreenSteps.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// Read from environment variables if flags are not set
+			if versionFlag {
+				fmt.Printf("vlp2ss version %s\n", AppVersion)
+				os.Exit(0)
+			}
+			// Load environment variables if provided
+			if envFile != "" {
+				// ... existing code ...
+			}
+			// Load from default env variables if flags are not set
 			if account == "" {
 				account = os.Getenv("SS_ACCOUNT")
 			}
@@ -2086,6 +2148,14 @@ License: MIT`,
 				fmt.Println("\nFor detailed examples, run with --examples")
 				return
 			}
+
+			// Print Header
+			headerColor := color.New(color.FgHiMagenta, color.Bold).SprintFunc()
+			fmt.Println(headerColor("======================================================================"))
+			fmt.Println(headerColor(centerText("VLP to ScreenSteps Converter", 70)))
+			fmt.Println(headerColor(centerText("Version: "+AppVersion, 70)))
+			fmt.Println(headerColor("======================================================================"))
+			fmt.Println()
 
 			// Clean logs and output directories at startup
 			if err := os.RemoveAll("logs"); err != nil && !os.IsNotExist(err) {
@@ -2151,6 +2221,7 @@ License: MIT`,
 		},
 	}
 
+	rootCmd.PersistentFlags().StringVar(&envFile, "env-file", "", "Path to environment file for credentials")
 	rootCmd.Flags().StringVarP(&inputPath, "input", "i", "", "Input VLP ZIP file or extracted directory")
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "output", "Output directory")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
@@ -2161,7 +2232,8 @@ License: MIT`,
 	rootCmd.Flags().StringVar(&user, "user", "", "ScreenSteps user ID")
 	rootCmd.Flags().StringVar(&token, "token", "", "ScreenSteps API token")
 	rootCmd.Flags().StringVar(&siteID, "site", "", "ScreenSteps site ID")
-	rootCmd.Flags().BoolVar(&suffix, "suffix", false, "Append -go to manual titles")
+	rootCmd.Flags().BoolVar(&suffix, "suffix", false, "Append '-go' to the manual title")
+	rootCmd.Flags().BoolVar(&versionFlag, "version", false, "Display version information")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
