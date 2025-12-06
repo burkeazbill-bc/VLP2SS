@@ -384,6 +384,7 @@ All dependencies are used in compliance with their respective licenses.
   - Implemented conversion for nested ordered lists (a, b, c...).
   - Added support for "info" styled text blocks.
   - Fixed `--version` flag to display current version.
+  - Added support for Google Doc conversion (Must Download as Webpage HTML Zip)
 - **v1.0.2** (2025-11-11)
   - Added progress tracking output to logging (percentages and ETA)
 - **v1.0.1** (2025-11-11)
