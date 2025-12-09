@@ -380,12 +380,45 @@ class VLPParser:
                 'articles': []
             }
             
+            # Track current position for articles
+            current_position = 1
+            
+            # If chapter has description content, create it as the first article
+            if chapter['description']:
+                self.logger.info(f"Creating article from description for chapter: {chapter['title']}")
+                
+                # Create a step with the description content
+                step = {
+                    'id': generate_uuid(),
+                    'title': chapter['title'],
+                    'order': 0,
+                    'content': chapter['description'],
+                    'images': chapter_node.get('images', [])
+                }
+                
+                # Create the article
+                desc_article = {
+                    'id': generate_uuid(),
+                    'title': chapter['title'],
+                    'vlp_order': 0,  # Place at start
+                    'position': current_position,
+                    'steps': [step]
+                }
+                
+                chapter['articles'].append(desc_article)
+                self.logger.processed_articles += 1
+                self.logger.processed_images += len(chapter_node.get('images', []))
+                current_position += 1
+            
             # Process level 2 children as articles
             if chapter_node.get('children'):
                 # Sort articles by VLP order, then assign sequential positions
                 sorted_articles = sorted(chapter_node['children'], key=lambda x: x['order'])
                 
-                for position, article_node in enumerate(sorted_articles, start=1):
+                for article_node in sorted_articles:
+                    position = current_position
+                    current_position += 1
+                    
                     self.logger.current_article += 1
                     self.logger.progress(f"Processing article: {article_node['title']}")
                     
