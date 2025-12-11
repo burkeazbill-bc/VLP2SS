@@ -565,6 +565,10 @@ class VLPParser:
             
             # STEP 2: Process spans with hybrid context + pattern detection
             for span in soup.find_all('span', class_=True):
+                # Skip if span has been removed/unwrapped from the tree
+                if not span.parent:
+                    continue
+                
                 classes = span.get('class')
                 if not classes:
                     continue
@@ -664,12 +668,15 @@ class VLPParser:
                                 ol_tag['type'] = 'i'
                                 ol_tag['style'] = 'margin-left: 80px; list-style-type: upper-latin;'
             result = str(soup)
-
+               
             return result
             
         except Exception as e:
             # If parsing fails, return original HTML
+            import traceback
             self.logger.warning(f"Failed to parse HTML for formatting conversion: {e}")
+            if self.verbose:
+                self.logger.warning(f"Traceback: {traceback.format_exc()}")
             return html
     
     def _convert_vlp_paragraph_styles(self, html_content: str) -> str:
@@ -678,11 +685,13 @@ class VLPParser:
             return ""
 
         p_class_to_style_map = {
-            'c10': 'introduction',
-            'c44': 'introduction',
-            # Removed c48, c28, c39 - these are used for regular paragraphs and table cells
-            # NOT for styled info blocks. They represent formatting like indentation or alignment.
-            # Add other mappings here as they are identified
+            # NOTE: CSS classes like c10, c44, c48, etc. are document-specific and NOT reliable
+            # indicators of styled blocks. They are used for regular paragraph formatting (indentation,
+            # alignment, etc.) and should NOT be mapped to ScreenSteps styled blocks.
+            # 
+            # Styled blocks should only be applied based on semantic HTML structure or explicit
+            # content patterns, not generic CSS classes from Google Docs exports.
+            # Add mappings here ONLY if you identify a truly consistent semantic pattern.
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -697,10 +706,13 @@ class VLPParser:
         processed_tags = set()
 
         for p_class, style in p_class_to_style_map.items():
-            # Find all tags with the current class
+            # Find all tags with the current class, EXCLUDING those inside tables
+            # Also skip tags that have been removed from the tree (parent is None)
             tags_with_class = [
                 p for p in all_p_tags 
-                if (p_classes := p.get('class')) and p_class in p_classes and p not in processed_tags
+                if p.parent  # Skip if tag was removed/extracted from tree
+                and (p_classes := p.get('class')) and p_class in p_classes and p not in processed_tags
+                and not p.find_parent('table')  # Skip paragraphs inside tables
             ]
             
             i = 0
