@@ -669,7 +669,6 @@ tail -f logs/screensteps_upload_*.log
 1. Use verbose mode to monitor progress
 2. Ensure sufficient disk space
 3. Close other applications to free memory
-4. Consider using the Go implementation for better performance
 
 ### Parallel Processing
 
@@ -727,7 +726,6 @@ for result in results:
 - [Main Documentation](README.md)
 - [API Guide](API_GUIDE.md)
 - [Installation Guide](INSTALLATION.md)
-- [Go Usage Guide](usage-golang.md)
 - [Python Requests Documentation](https://docs.python-requests.org/)
 
 ## Support

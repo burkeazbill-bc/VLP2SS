@@ -372,11 +372,21 @@ class VLPParser:
         for chapter_idx, chapter_node in enumerate(manual_data['chapters'], 1):
             self.logger.current_chapter = chapter_idx
             
+            chapter_title = chapter_node['title']
+            chapter_desc = self._clean_html(chapter_node['content'])
+
+            # Handle missing chapter titles (often Copyright page)
+            if not chapter_title:
+                if "Copyright" in chapter_desc:
+                    chapter_title = "Copyright"
+                else:
+                    chapter_title = "Unknown Title"
+
             chapter = {
                 'id': chapter_node['id'],
-                'title': chapter_node['title'],
+                'title': chapter_title,
                 'order': chapter_node['order'],
-                'description': self._clean_html(chapter_node['content']),
+                'description': chapter_desc,
                 'articles': []
             }
             
@@ -420,15 +430,41 @@ class VLPParser:
                     current_position += 1
                     
                     self.logger.current_article += 1
-                    self.logger.progress(f"Processing article: {article_node['title']}")
+                    
+                    article_title = article_node['title']
+                    
+                    # Handle missing article titles
+                    if not article_title:
+                        article_content = self._clean_html(article_node['content'])
+                        if "Copyright" in article_content:
+                            article_title = "Copyright"
+                        else:
+                            article_title = "Unknown Title"
+
+                    self.logger.progress(f"Processing article: {article_title}")
                     
                     article = {
                         'id': article_node['id'],
-                        'title': article_node['title'],
+                        'title': article_title,
                         'vlp_order': article_node['order'],  # Keep VLP order for reference
                         'position': position,  # Sequential position for ScreenSteps
                         'steps': []  # Store level 3 as steps
                     }
+                    
+                    # If Article (Level 2) has content, create a step for it first
+                    # This handles cases where a Level 2 node has both content AND children
+                    article_content = self._clean_html(article_node['content'])
+                    if article_content:
+                        # Create a step for the article's own content
+                        intro_step = {
+                            'id': generate_uuid(),
+                            'title': article['title'],
+                            'order': -1, # Ensure it comes first
+                            'content': article_content,
+                            'images': article_node.get('images', [])
+                        }
+                        article['steps'].append(intro_step)
+                        self.logger.processed_images += len(article_node.get('images', []))
                     
                     # Process level 3 children as steps
                     if article_node.get('children'):
@@ -445,18 +481,8 @@ class VLPParser:
                             article['steps'].append(step)
                             # Count processed images
                             self.logger.processed_images += len(step_node.get('images', []))
-                    else:
-                        # If no level 3, treat article content as single step
-                        step = {
-                            'id': article_node['id'],
-                            'title': article_node['title'],
-                            'order': 0,
-                            'content': self._clean_html(article_node['content']),
-                            'images': article_node.get('images', [])
-                        }
-                        article['steps'].append(step)
-                        # Count processed images
-                        self.logger.processed_images += len(article_node.get('images', []))
+                    # Removed else block that only processed content if no children existed
+                    # Content is now handled before children processing
                     
                     chapter['articles'].append(article)
                     self.logger.processed_articles += 1

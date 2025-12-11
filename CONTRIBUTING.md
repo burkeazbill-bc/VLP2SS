@@ -49,7 +49,6 @@ Before you begin, ensure you have the following installed:
 
 - **Git**: For version control
 - **Python 3.7+**: For Python implementation
-- **Go 1.21+**: For Go implementation
 - **Bash 4.0+**: For Bash scripts
 - **Text Editor**: VS Code, Vim, or your preferred editor
 
@@ -124,23 +123,6 @@ pip3 install pre-commit
 pre-commit install
 ```
 
-### Go Development
-
-1. Install dependencies:
-
-```bash
-cd golang
-go mod download
-go mod tidy
-```
-
-2. Install development tools:
-
-```bash
-go install golang.org/x/tools/cmd/goimports@latest
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-```
-
 ### Bash Development
 
 1. Install shellcheck for linting:
@@ -206,50 +188,6 @@ def convert_vlp_to_screensteps(
     """
     # Implementation here
     pass
-```
-
-### Go
-
-Follow [Effective Go](https://golang.org/doc/effective_go) guidelines:
-
-```bash
-# Format code
-go fmt ./...
-
-# Run linter
-golangci-lint run
-
-# Organize imports
-goimports -w .
-```
-
-**Key guidelines:**
-
-- Use tabs for indentation
-- Use `gofmt` to format code
-- Write godoc comments for exported functions
-- Use meaningful variable names
-- Handle errors explicitly
-
-**Example:**
-
-```go
-// ConvertVLPToScreenSteps converts VLP content to ScreenSteps format.
-//
-// Parameters:
-//   - inputPath: Path to VLP ZIP file or directory
-//   - outputDir: Output directory for converted content
-//   - verbose: Enable verbose logging
-//
-// Returns the path to the converted content directory and any error encountered.
-func ConvertVLPToScreenSteps(inputPath, outputDir string, verbose bool) (string, error) {
-    if inputPath == "" {
-        return "", fmt.Errorf("input path cannot be empty")
-    }
-    
-    // Implementation here
-    return "", nil
-}
 ```
 
 ### Bash
@@ -351,63 +289,6 @@ pytest --cov=python tests/
 pytest tests/test_converter.py
 ```
 
-### Go Tests
-
-Write tests using Go's testing package:
-
-```go
-// converter_test.go
-package main
-
-import (
-    "testing"
-)
-
-func TestConvertVLPToScreenSteps(t *testing.T) {
-    tests := []struct {
-        name      string
-        inputPath string
-        outputDir string
-        wantErr   bool
-    }{
-        {
-            name:      "valid input",
-            inputPath: "test.zip",
-            outputDir: "output",
-            wantErr:   false,
-        },
-        {
-            name:      "empty input",
-            inputPath: "",
-            outputDir: "output",
-            wantErr:   true,
-        },
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            _, err := ConvertVLPToScreenSteps(tt.inputPath, tt.outputDir, false)
-            if (err != nil) != tt.wantErr {
-                t.Errorf("ConvertVLPToScreenSteps() error = %v, wantErr %v", err, tt.wantErr)
-            }
-        })
-    }
-}
-```
-
-Run tests:
-
-```bash
-# Run all tests
-go test ./...
-
-# Run with coverage
-go test -cover ./...
-
-# Run specific test
-go test -run TestConvertVLPToScreenSteps
-```
-
 ### Bash Tests
 
 Write tests using [bats](https://github.com/bats-core/bats-core):
@@ -504,9 +385,6 @@ git rebase upstream/main
 # Python
 pytest
 
-# Go
-go test ./...
-
 # Bash
 shellcheck bash/vlp2ss.sh
 ```
@@ -574,7 +452,7 @@ Closes #(issue number)
 3. **Gather information**:
    - VLP2SS version
    - Operating system and version
-   - Python/Go version
+   - Python version
    - Steps to reproduce
    - Expected vs actual behavior
    - Error messages and logs
@@ -605,7 +483,6 @@ What actually happened.
 - VLP2SS version: 1.0.2
 - OS: macOS 13.0
 - Python version: 3.11
-- Go version: 1.21
 
 ## Logs
 
@@ -672,6 +549,6 @@ Thank you for contributing to VLP2SS! Your efforts help make this project better
 ---
 
 **Project:** VLP2SS - The VLP to ScreenSteps Converter  
-**Version:** 1.0.2  
+**Version:** 1.0.3 
 **Author:** Burke Azbill  
 **License:** MIT

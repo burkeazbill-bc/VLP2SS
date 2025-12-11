@@ -10,7 +10,6 @@ This guide provides detailed installation instructions for VLP2SS - The VLP to S
 
 - [System Requirements](#system-requirements)
 - [Python Installation](#python-installation)
-- [Go Installation](#go-installation)
 - [Docker Installation](#docker-installation)
 - [Verification](#verification)
 
@@ -29,10 +28,6 @@ This guide provides detailed installation instructions for VLP2SS - The VLP to S
 
 - Python 3.7 or higher
 - pip (Python package manager)
-
-#### For Go Implementation
-
-- Go 1.21 or higher
 
 ## Python Installation
 
@@ -107,74 +102,6 @@ chmod +x python/*.py
 
 # Test installation
 python3 python/vlp_converter.py --help
-```
-
-## Go Installation
-
-### Step 1: Install Go
-
-#### Go On macOS
-
-```bash
-# Using Homebrew
-brew install go
-
-# Verify installation
-go version
-```
-
-#### On Linux
-
-```bash
-# Download Go (check for latest version at golang.org)
-wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
-
-# Extract to /usr/local
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
-
-# Add to PATH (add to ~/.bashrc or ~/.zshrc)
-export PATH=$PATH:/usr/local/go/bin
-
-# Verify installation
-go version
-```
-
-#### On Windows
-
-Download and install from: <https://go.dev/dl/>
-
-### Step 2: Build Go Converter
-
-```bash
-# Navigate to Go directory
-cd /path/to/VLP2SS/golang
-
-# Download dependencies
-go mod download
-go mod tidy
-
-# Build the binary
-go build -o vlp2ss main.go
-
-# Or use Makefile
-make build
-
-# Test installation
-./vlp2ss --help
-```
-
-### Step 3: Install System-Wide (Optional)
-
-```bash
-# Copy to system bin directory
-sudo cp vlp2ss /usr/local/bin/
-
-# Or use Makefile
-make install
-
-# Test
-vlp2ss --help
 ```
 
 ## Docker Installation
@@ -253,19 +180,6 @@ python3 -c "import requests; print('OK')"
 python3 python/vlp_converter.py --examples
 ```
 
-### Verify Go Installation
-
-```bash
-# Check Go version
-go version
-
-# Check binary
-./golang/vlp2ss --version
-
-# Test converter
-./golang/vlp2ss --examples
-```
-
 ### Verify Docker Installation
 
 ```bash
@@ -334,17 +248,6 @@ pip3 install --user requests
 pip3 show requests
 ```
 
-### Go: Command Not Found
-
-```bash
-# Add Go to PATH
-export PATH=$PATH:/usr/local/go/bin
-
-# Add to shell configuration
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
-```
-
 ### Docker: Permission Denied
 
 ```bash
@@ -367,16 +270,6 @@ pip3 uninstall requests
 rm -rf /path/to/VLP2SS/python
 ```
 
-### Remove Go Installation
-
-```bash
-# Remove binary
-rm /usr/local/bin/vlp2ss
-
-# Remove source
-rm -rf /path/to/VLP2SS/golang
-```
-
 ### Remove Docker Installation
 
 ```bash
@@ -394,7 +287,6 @@ After installation:
 1. Review the [Complete User Guide](README.md) for usage instructions
 2. Check the usage guides:
    - [Python Usage Guide](usage-python.md)
-   - [Go Usage Guide](usage-golang.md)
 3. Read [API_GUIDE.md](API_GUIDE.md) for API integration
 4. See the [troubleshooting section](README.md#troubleshooting) for common issues
 

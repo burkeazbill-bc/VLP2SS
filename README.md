@@ -2,7 +2,7 @@
 
 > Convert VMware Lab Platform (VLP) exported lab manuals to ScreenSteps format with API upload capabilities.
 
-[![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/) [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://golang.org/) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/) [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Version:** 1.0.3  
 **Author:** Burke Azbill  
@@ -10,7 +10,7 @@
 
 ## 🎯 Overview
 
-VLP2SS provides a complete toolset for converting VLP (VMware Lab Platform) exported content into ScreenSteps-compatible format. It includes two implementations (Python, Go) and comprehensive documentation.
+VLP2SS provides a complete toolset for converting VLP (VMware Lab Platform) exported content into ScreenSteps-compatible format. It includes a robust Python implementation and comprehensive documentation.
 
 ### What It Does
 
@@ -23,8 +23,6 @@ VLP2SS provides a complete toolset for converting VLP (VMware Lab Platform) expo
 
 ## 🚀 Quick Start
 
-### Option 1: Python (Recommended for most users)
-
 ```bash
 # Install dependencies
 pip3 install -r python/requirements.txt
@@ -33,17 +31,6 @@ pip3 install -r python/requirements.txt
 ./python/vlp2ss-py.sh \
     -i HOL-2601-03-VCF-L_en.zip \
     -o output/
-```
-
-### Option 2: Go (Best for performance)
-
-```bash
-# Build
-cd golang
-make build
-
-# Convert
-./vlp2ss -i input.zip -o output/
 ```
 
 ## 📁 Project Structure
@@ -55,18 +42,12 @@ VLP2SS/
 │   ├── screensteps_uploader.py # API uploader
 │   ├── vlp2ss-py.sh            # Python launcher script
 │   └── requirements.txt        # Dependencies
-├── golang/                     # Go implementation
-│   ├── main.go                 # Go converter
-│   ├── go.mod                  # Go modules
-│   ├── Makefile                # Build automation
-│   └── README.md               # Go-specific docs
 ├── docs/                       # Documentation
 │   ├── README.md               # Complete user guide
 │   ├── INSTALLATION.md         # Installation guide
 │   ├── API_GUIDE.md            # API integration guide
 │   ├── usage-bash.md           # Bash usage guide
 │   ├── usage-python.md         # Python usage guide
-│   └── usage-golang.md         # Go usage guide
 ├── LICENSE                     # MIT License
 ├── README.md                   # This file
 └── CONTRIBUTING.md             # Contribution guidelines
@@ -80,7 +61,6 @@ Comprehensive documentation is available:
 - **[Installation Guide](docs/INSTALLATION.md)** - Step-by-step installation
 - **[API Integration Guide](docs/API_GUIDE.md)** - ScreenSteps API details
 - **[Python Usage Guide](docs/usage-python.md)** - Python implementation guide
-- **[Go Usage Guide](docs/usage-golang.md)** - Go implementation guide
 - **[Contributing Guide](CONTRIBUTING.md)** - How to contribute
 
 ## ✨ Features
@@ -115,8 +95,7 @@ Comprehensive documentation is available:
 
 ### Prerequisites
 
-- **Python**: 3.7 or higher (for Python implementation)
-- **Go**: 1.21 or higher (for Go implementation)
+- **Python**: 3.7 or higher
 
 ### Quick Install
 
@@ -127,9 +106,6 @@ pip3 install requests
 # Make scripts executable
 chmod +x python/vlp2ss-py.sh
 chmod +x python/*.py
-
-# Build Go binary (optional)
-cd golang && make build
 ```
 
 For detailed installation instructions, see [INSTALLATION.md](docs/INSTALLATION.md).
@@ -161,17 +137,6 @@ for file in *.zip; do
         -i "$file" \
         -o "output/$(basename "$file" .zip)"
 done
-```
-
-### Example 4: Go Implementation
-
-```bash
-cd golang
-./vlp2ss -i input.zip -o output/ --upload \
-    --account myaccount \
-    --user admin \
-    --token YOUR_API_TOKEN \
-    --site 12345
 ```
 
 ## 🏗️ Output Structure
@@ -220,19 +185,6 @@ python3 python/screensteps_uploader.py \
 ```
 
 For detailed API documentation, see [API_GUIDE.md](docs/API_GUIDE.md).
-
-## 🎨 Implementation Comparison
-
-| Feature | Python | Go |
-|---------|--------|-----|
-| **Speed** | Moderate | Fast (2-3x) |
-| **Dependencies** | Python 3.7+, requests | None |
-| **API Upload** | ✅ Yes | ✅ Yes |
-| **Ease of Use** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Flexibility** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **Performance** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **Portability** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **Best For** | Development | Production |
 
 ## 🐛 Troubleshooting
 
@@ -368,7 +320,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 This project uses the following open-source libraries:
 
 - **Python**: `requests` library (Apache 2.0 License)
-- **Go**: `github.com/fatih/color` (MIT License), `github.com/spf13/cobra` (Apache 2.0 License)
 
 All dependencies are used in compliance with their respective licenses.
 
@@ -393,7 +344,7 @@ All dependencies are used in compliance with their respective licenses.
   
 - **v1.0** (2025-11-07)
   - Initial release
-  - Python and Go implementations
+  - Python implementation
   - Full API upload support
   - Comprehensive documentation
   - Tested with real VLP data

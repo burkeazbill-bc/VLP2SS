@@ -107,4 +107,3 @@ These improvements are fully backward compatible:
 For detailed implementation information, see:
 
 - [Python Implementation](../python/vlp_converter.py)
-- [Go Implementation](../golang/main.go)

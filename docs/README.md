@@ -24,7 +24,6 @@ A comprehensive toolset for converting VMware Lab Platform (VLP) exported conten
 This project provides tools to convert lab manuals exported from VMware Lab Platform (VLP) into ScreenSteps-compatible format. It includes:
 
 - **Python Implementation**: Full-featured converter with API upload capabilities
-- **Go Implementation**: High-performance standalone binary
 - **Comprehensive Logging**: Detailed logs for debugging and auditing
 - **Beautiful CLI**: Colored output with progress tracking
 
@@ -44,7 +43,6 @@ This project provides tools to convert lab manuals exported from VMware Lab Plat
 
 ### ✨ Technical Features
 
-- 🔧 Multiple implementation options (Python, Go)
 - 🔧 Configurable output structure
 - 🔧 Verbose and quiet modes
 - 🔧 Dry-run capability
@@ -62,21 +60,10 @@ This project provides tools to convert lab manuals exported from VMware Lab Plat
 - Python 3.7 or higher
 - pip (Python package manager)
 
-#### For Go Implementation
-
-- Go 1.21 or higher
-
 ### Installing Python Dependencies
 
 ```bash
 pip3 install requests
-```
-
-### Building Go Binary
-
-```bash
-cd golang
-make build
 ```
 
 ### Making Scripts Executable
@@ -93,10 +80,6 @@ chmod +x python/*.py
 # Using Python
 cd python
 python3 vlp_converter.py -i input.zip -o output/
-
-# Using Go
-cd golang
-./vlp2ss -i input.zip -o output/
 ```
 
 ### 🚀 Convert and Upload to ScreenSteps
@@ -112,25 +95,13 @@ cd python
     --user admin \
     --token YOUR_API_TOKEN \
     --site 12345
-
-# Using Go
-cd golang
-./vlp2ss \
-    -i input.zip \
-    -o output/ \
-    --upload \
-    --account myaccount \
-    --user admin \
-    --token YOUR_API_TOKEN \
-    --site 12345
 ```
 
 ## Usage Guides
 
-For detailed usage instructions for each implementation, see:
+For detailed usage instructions, see:
 
 - **[Python Usage Guide](usage-python.md)** - Python implementation with API
-- **[Go Usage Guide](usage-golang.md)** - High-performance Go implementation
 
 ### Quick Reference
 
@@ -211,23 +182,6 @@ export SS_SITE=12345
 ./vlp2ss-py.sh -i input.zip -o output/ --upload
 ```
 
-### 📖 Go Converter
-
-#### Go Basic Usage
-
-```bash
-./vlp2ss -i <input> -o <output>
-```
-
-#### Go Options
-
-- `-i, --input PATH`: Input VLP ZIP file or directory
-- `-o, --output PATH`: Output directory (default: output)
-- `-v, --verbose`: Enable verbose logging
-- `--no-cleanup`: Keep temporary files
-- `--examples`: Show detailed examples
-- `-h, --help`: Show help message
-
 ## Architecture
 
 ### 🏗️ VLP Content Structure
@@ -278,7 +232,7 @@ output/
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     User Interface                          │
-│  (Python CLI / Go CLI)                                      │
+│  (Python CLI)                                               │
 └─────────────────────┬───────────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────────┐
@@ -624,9 +578,6 @@ Enable verbose logging for troubleshooting:
 ```bash
 # Python
 python3 vlp_converter.py -i input.zip -o output/ -v
-
-# Go
-./vlp-converter -i input.zip -o output/ -v
 ```
 
 ### Log Files
@@ -655,7 +606,6 @@ logs/
 - **[Installation Guide](INSTALLATION.md)** - Detailed installation instructions
 - **[API Guide](API_GUIDE.md)** - ScreenSteps API integration details
 - **[Python Usage](usage-python.md)** - Python implementation guide
-- **[Go Usage](usage-golang.md)** - Go implementation guide
 - **[Contributing](../CONTRIBUTING.md)** - Contribution guidelines
 
 ## License
