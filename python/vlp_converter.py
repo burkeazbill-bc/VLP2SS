@@ -262,6 +262,7 @@ class VLPParser:
     
     def __init__(self, logger: ProgressLogger):
         self.logger = logger
+        self.verbose = logger.verbose  # Enable verbose logging for debugging
     
     def parse_xml(self, xml_path: Path) -> Dict:
         """Parse VLP content.xml file"""
@@ -526,7 +527,14 @@ class VLPParser:
         return html.strip()
     
     def _convert_vlp_formatting(self, html: str) -> str:
-        """Convert VLP-specific span classes to proper HTML formatting tags"""
+        """Convert VLP-specific span classes to proper HTML formatting tags
+        
+        Uses hybrid context + pattern-based detection:
+        - Identifies link classes to avoid converting them
+        - Applies bold to spans in heading tags
+        - Uses content patterns (labels, callouts, caps) for multi-class spans
+        - Skips all table elements (let ScreenSteps handle styling)
+        """
         if not html:
             return ""
         
@@ -537,38 +545,79 @@ class VLPParser:
             # Convert YouTube embeds first (before other transformations)
             self._convert_youtube_embeds(soup)
             
-            # Map of VLP CSS classes to HTML tags
-            # Based on Google Docs HTML export patterns:
-            # - c0: Normal text (no formatting) - DO NOT MAP
-            # - c3: Strong/bold text
-            # - c5: Strong/bold text (commonly used)
-            # - c6: Code/monospace text
-            # - c7: Strong/bold text
-            class_to_tag_map = {
-                # 'c0' removed - it's normal text, not bold
-                'c3': 'strong',
-                'c5': 'strong',
-                'c6': 'code',
-                'c7': 'strong',
-            }
+            # STEP 1: Pre-process - Identify link classes
+            # These classes should NEVER be converted to bold
+            link_classes = set()
+            for a_tag in soup.find_all('a'):
+                if a_tag.has_attr('class'):
+                    classes_attr = a_tag.get('class')
+                    if classes_attr:
+                        link_classes.update(classes_attr)
             
-            # Find all span elements with class attributes
+            # Optional verbose logging
+            if self.verbose:
+                total_spans = len(soup.find_all('span', class_=True))
+                link_count = len(link_classes)
+                self.logger.substep(f"Processing {total_spans} spans, found {link_count} link classes")
+            
+            # Explicit code class mapping (relatively consistent)
+            code_class = 'c6'
+            
+            # STEP 2: Process spans with hybrid context + pattern detection
             for span in soup.find_all('span', class_=True):
                 classes = span.get('class')
                 if not classes:
                     continue
                 
-                # Check if any class matches our mapping
-                replacement_tag = None
-                # Prioritize 'c5' (strong) over other classes if present
-                if 'c5' in classes:
-                    replacement_tag = 'strong'
-                else:
-                    for cls in classes:
-                        if cls in class_to_tag_map:
-                            replacement_tag = class_to_tag_map[cls]
-                            break
+                # Skip if span is inside a link
+                if span.find_parent('a'):
+                    continue
                 
+                # Skip if classes are link-related
+                if any(cls in link_classes for cls in classes):
+                    continue
+                
+                # Skip ALL table elements (let ScreenSteps handle styling)
+                if span.find_parent('table'):
+                    continue
+                
+                parent = span.parent
+                replacement_tag = None
+                
+                # CONTEXT 1: Inside heading tags - always apply bold
+                if parent and parent.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                    replacement_tag = 'strong'
+                
+                # CONTEXT 2: Regular content - hybrid multi-class + content pattern
+                else:
+                    # Check for explicit code class
+                    if code_class in classes:
+                        replacement_tag = 'code'
+                    else:
+                        # Filter semantic classes (c + digits)
+                        sem_classes = [c for c in classes if c.startswith('c') and c[1:].isdigit()]
+                        
+                        # Multi-class with content pattern check
+                        if len(sem_classes) >= 2:
+                            text_content = span.get_text(strip=True)
+                            
+                            # Patterns suggesting bold intent:
+                            # - Short text (likely labels/emphasis) < 50 chars
+                            # - Ends with colon (labels like "Note:")
+                            # - All caps (emphasis)
+                            # - Starts with common callouts
+                            is_short = len(text_content) < 50
+                            is_label = text_content.endswith(':')
+                            is_caps = text_content.isupper() and len(text_content) > 1
+                            is_callout = any(text_content.upper().startswith(kw) 
+                                           for kw in ['NOTE:', 'WARNING:', 'CAUTION:', 'TIP:', 'IMPORTANT:'])
+                            is_title_case = text_content and text_content[0].isupper()
+                            
+                            # Apply bold if patterns match
+                            if is_label or is_caps or is_callout or (is_short and is_title_case):
+                                replacement_tag = 'strong'
+                
+                # Apply transformation or unwrap
                 if replacement_tag:
                     # Create new tag with the same content
                     new_tag = soup.new_tag(replacement_tag)
