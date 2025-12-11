@@ -509,21 +509,16 @@ class VLPParser:
         }
     
     def _clean_html(self, html: str) -> str:
-        """Clean and normalize HTML content with proper formatting preservation"""
+        """Clean up and convert VLP HTML to ScreenSteps-compatible HTML."""
         if not html:
             return ""
-        
-        # First unescape HTML entities (may need multiple passes for double-encoding)
-        html = unescape(html)
-        # Second pass to handle double-encoded entities like &amp;gt; -> &gt; -> >
-        html = unescape(html)
-        
+
         # Parse and convert VLP-specific formatting to standard HTML
         html = self._convert_vlp_formatting(html)
-        
+
         # Fix image paths - remove ./ prefix
         html = re.sub(r'src=["\']\./', 'src="', html)
-        
+
         return html.strip()
     
     def _convert_vlp_formatting(self, html: str) -> str:
@@ -538,9 +533,11 @@ class VLPParser:
         if not html:
             return ""
         
+        verbose = hasattr(self, 'verbose') and self.verbose
+
         try:
-            # Use BeautifulSoup to parse and transform the HTML
             soup = BeautifulSoup(html, 'html.parser')
+            # Use BeautifulSoup to parse and transform the HTML
             
             # Convert YouTube embeds first (before other transformations)
             self._convert_youtube_embeds(soup)
@@ -555,13 +552,15 @@ class VLPParser:
                         link_classes.update(classes_attr)
             
             # Optional verbose logging
-            if self.verbose:
+            if verbose:
                 total_spans = len(soup.find_all('span', class_=True))
                 link_count = len(link_classes)
                 self.logger.substep(f"Processing {total_spans} spans, found {link_count} link classes")
             
             # Explicit code class mapping (relatively consistent)
             code_class = 'c6'
+            # Explicit bold class mapping (for this specific manual and potentially others)
+            explicit_bold_classes = {'c2', 'c11'}
             
             # STEP 2: Process spans with hybrid context + pattern detection
             for span in soup.find_all('span', class_=True):
@@ -597,6 +596,9 @@ class VLPParser:
                     # Check for explicit code class
                     if code_class in classes:
                         replacement_tag = 'code'
+                    # Check for explicit bold classes (NEW FIX)
+                    elif any(cls in explicit_bold_classes for cls in classes):
+                        replacement_tag = 'strong'
                     else:
                         # Filter semantic classes (c + digits)
                         sem_classes = [c for c in classes if c.startswith('c') and c[1:].isdigit()]
@@ -668,14 +670,14 @@ class VLPParser:
                                 ol_tag['type'] = 'i'
                                 ol_tag['style'] = 'margin-left: 80px; list-style-type: upper-latin;'
             result = str(soup)
-               
+
             return result
             
         except Exception as e:
             # If parsing fails, return original HTML
             import traceback
             self.logger.warning(f"Failed to parse HTML for formatting conversion: {e}")
-            if self.verbose:
+            if verbose:
                 self.logger.warning(f"Traceback: {traceback.format_exc()}")
             return html
     
