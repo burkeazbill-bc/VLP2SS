@@ -538,9 +538,14 @@ class VLPParser:
             self._convert_youtube_embeds(soup)
             
             # Map of VLP CSS classes to HTML tags
-            # c5 is commonly used for bold/strong text in VLP exports
+            # Based on Google Docs HTML export patterns:
+            # - c0: Normal text (no formatting) - DO NOT MAP
+            # - c3: Strong/bold text
+            # - c5: Strong/bold text (commonly used)
+            # - c6: Code/monospace text
+            # - c7: Strong/bold text
             class_to_tag_map = {
-                'c0': 'strong',
+                # 'c0' removed - it's normal text, not bold
                 'c3': 'strong',
                 'c5': 'strong',
                 'c6': 'code',
@@ -572,10 +577,8 @@ class VLPParser:
                     # Replace the span with the new tag
                     span.replace_with(new_tag)
                 else:
-                    # If no mapping found, unwrap the span but keep its content
-                    # This handles spans like <span class="c0"> that are just containers
-                    if span.string:
-                        span.unwrap()
+                    # Unwrap all non-mapped spans to preserve content without wrapper
+                    span.unwrap()
             
             # Convert back to string first
             html = str(soup)
@@ -628,13 +631,17 @@ class VLPParser:
         p_class_to_style_map = {
             'c10': 'introduction',
             'c44': 'introduction',
-            'c48': 'info',
-            'c28': 'info',
-            'c39': 'info',
+            # Removed c48, c28, c39 - these are used for regular paragraphs and table cells
+            # NOT for styled info blocks. They represent formatting like indentation or alignment.
             # Add other mappings here as they are identified
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Note: We do NOT apply styling to table cells (thead/tbody/td/th)
+        # Tables should be preserved as-is with their native HTML structure
+        # The ScreenSteps API will handle table rendering properly
+        
         # Use a copy of the list of tags to iterate over, as we are modifying the tree
         # Filter to ensure only valid Tag objects are included
         all_p_tags = [p for p in soup.find_all('p') if p is not None and isinstance(p, Tag)]
