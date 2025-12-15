@@ -46,7 +46,6 @@ VLP2SS/
 │   ├── README.md               # Complete user guide
 │   ├── INSTALLATION.md         # Installation guide
 │   ├── API_GUIDE.md            # API integration guide
-│   ├── usage-bash.md           # Bash usage guide
 │   ├── usage-python.md         # Python usage guide
 ├── LICENSE                     # MIT License
 ├── README.md                   # This file
@@ -294,7 +293,7 @@ Areas for improvement:
 ### Known Issues
 
 - Not all ScreenSteps accounts are enabled for image/file upload
-- In some cases, the Google Docs styling is not consistent so some text may end up bold while other text does not. This has been seen frequently. Some Lab Manuals don't have this happen at all, while others do.
+- In many cases, the Google Docs styling is not consistent so some text may end up bold while other text does not. This has been seen frequently. Some Lab Manuals don't have this happen at all, while others do.
 
 ### Getting Help
 
@@ -341,7 +340,6 @@ All dependencies are used in compliance with their respective licenses.
 - **v1.0.1** (2025-11-11)
   - Fix double encoded xml export translation
   - Fix Youtube embedded videos
-  
 - **v1.0** (2025-11-07)
   - Initial release
   - Python implementation
