@@ -829,6 +829,349 @@ class VLPParser:
         
         return text
 
+
+class EduManualParser:
+    """Parser for Edu/Training format XML content (To_Import.xml)
+    
+    This format differs from VLP content.xml:
+    - Root element is <manual> without id/name attributes
+    - Content nodes use lowercase <contentNodes> for children (not <children>)
+    - Images are embedded in HTML as <img src="media/..."/> paths
+    - No separate <images> block per ContentNode
+    """
+    
+    def __init__(self, logger: ProgressLogger):
+        self.logger = logger
+        self.verbose = logger.verbose
+        self.media_base_path = None  # Will be set during parsing
+    
+    def parse_xml(self, xml_path: Path) -> Dict:
+        """Parse Edu format To_Import.xml file"""
+        self.logger.info(f"Parsing Edu format XML: {xml_path}")
+        self.media_base_path = xml_path.parent  # media folder is relative to XML
+        
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            
+            # Extract manual name from directory name (since no explicit name attribute)
+            manual_name = xml_path.parent.name
+            # Clean up the name (remove _LabVLP suffix if present)
+            if manual_name.endswith('_LabVLP'):
+                manual_name = manual_name[:-7]
+            
+            manual_data = {
+                'id': generate_uuid(),  # Generate new UUID since format lacks id
+                'name': manual_name,
+                'language': 'en',
+                'format': 'edu',
+                'chapters': []
+            }
+            
+            # Parse content nodes from <contentNodes> element
+            content_nodes = root.find('contentNodes')
+            if content_nodes is not None:
+                for node in content_nodes.findall('ContentNode'):
+                    parsed_node = self._parse_content_node(node, level=0)
+                    if parsed_node:
+                        manual_data['chapters'].append(parsed_node)
+            
+            self.logger.success(f"Parsed Edu manual: {manual_data['name']}")
+            self.logger.substep(f"Found {len(manual_data['chapters'])} top-level sections")
+            
+            return manual_data
+            
+        except ET.ParseError as e:
+            self.logger.error(f"XML parsing error: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error parsing Edu XML: {e}")
+            raise
+    
+    def _parse_content_node(self, node: ET.Element, level: int = 0) -> Optional[Dict]:
+        """Recursively parse Edu content nodes"""
+        node_data = {
+            'id': generate_uuid(),  # Generate UUID since format lacks id
+            'title': '',
+            'order': 0,
+            'content': '',
+            'images': [],
+            'children': []
+        }
+        
+        # Get title directly from node (may be outside localizations)
+        direct_title = node.findtext('title', '')
+        if direct_title:
+            node_data['title'] = self._clean_cdata(direct_title)
+        
+        # Parse localizations
+        localizations = node.find('localizations')
+        if localizations is not None:
+            locale_content = localizations.find('LocaleContent')
+            if locale_content is not None:
+                # Get localized title (prefer this over direct title)
+                loc_title = locale_content.findtext('title', '')
+                if loc_title:
+                    node_data['title'] = self._clean_cdata(loc_title)
+                
+                # Get content
+                raw_content = locale_content.findtext('content', '')
+                if raw_content:
+                    node_data['content'] = self._clean_cdata(raw_content)
+                    # Extract image info from content HTML
+                    node_data['images'] = self._extract_images_from_content(node_data['content'])
+        
+        # Parse children recursively - note: lowercase 'contentNodes' in Edu format
+        children = node.find('contentNodes')
+        if children is not None:
+            child_order = 0
+            for child_node in children.findall('ContentNode'):
+                child_data = self._parse_content_node(child_node, level + 1)
+                if child_data:
+                    child_data['order'] = child_order
+                    node_data['children'].append(child_data)
+                    child_order += 1
+        
+        return node_data
+    
+    def _clean_cdata(self, text: str) -> str:
+        """Clean CDATA wrapper from text if present"""
+        if not text:
+            return ""
+        # CDATA is typically handled by ET.parse, but just in case
+        text = text.strip()
+        if text.startswith('<![CDATA['):
+            text = text[9:]
+        if text.endswith(']]>'):
+            text = text[:-3]
+        return text.strip()
+    
+    def _extract_images_from_content(self, html_content: str) -> List[Dict]:
+        """Extract image info from HTML content for Edu format"""
+        if not html_content:
+            return []
+        
+        images = []
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        for img in soup.find_all('img'):
+            src = img.get('src', '')
+            if src:
+                # Handle media/... paths from Edu format
+                # Example: media/_VCF/VCF9/Stage 3/VCF_Operations/.../image.png
+                src_str = str(src) if not isinstance(src, str) else src
+                
+                # Extract just the filename
+                filename = src_str.split('/')[-1]
+                
+                images.append({
+                    'src': src_str,
+                    'filename': filename,
+                    'original_path': src_str,  # Keep original path for copying
+                    'alt': img.get('alt', '')
+                })
+        
+        return images
+    
+    def flatten_structure(self, manual_data: Dict) -> List[Dict]:
+        """
+        Flatten Edu hierarchical structure into ScreenSteps format:
+        - Level 1 nodes become chapters (e.g., "Cover", "Lab 1: ...")
+        - Level 2 nodes become articles (e.g., "Objective and Tasks", "Task 1: ...")
+        - Level 3+ nodes become steps (content_blocks) within articles
+        
+        Uses the same VLPParser logic since structure mapping is identical.
+        """
+        # Reuse the VLPParser's flatten logic since the output structure is identical
+        # We just need to adapt image handling
+        
+        # First pass: count totals for progress tracking
+        total_chapters = len(manual_data['chapters'])
+        total_articles = 0
+        total_images = 0
+        
+        for chapter_node in manual_data['chapters']:
+            if chapter_node.get('children'):
+                total_articles += len(chapter_node['children'])
+                for article_node in chapter_node['children']:
+                    total_images += len(article_node.get('images', []))
+                    if article_node.get('children'):
+                        for step_node in article_node['children']:
+                            total_images += len(step_node.get('images', []))
+        
+        self.logger.set_totals(manuals=1, chapters=total_chapters, articles=total_articles, images=total_images)
+        self.logger.current_manual = 1
+        
+        chapters = []
+        
+        for chapter_idx, chapter_node in enumerate(manual_data['chapters'], 1):
+            self.logger.current_chapter = chapter_idx
+            
+            chapter_title = chapter_node['title']
+            chapter_desc = self._clean_html(chapter_node['content'])
+            
+            # Handle missing chapter titles
+            if not chapter_title:
+                if "Copyright" in chapter_desc:
+                    chapter_title = "Copyright"
+                else:
+                    chapter_title = "Unknown Title"
+            
+            chapter = {
+                'id': chapter_node['id'],
+                'title': chapter_title,
+                'order': chapter_idx - 1,
+                'description': chapter_desc,
+                'articles': []
+            }
+            
+            current_position = 1
+            
+            # If chapter has description content, create it as the first article
+            if chapter['description']:
+                self.logger.info(f"Creating article from description for chapter: {chapter['title']}")
+                
+                step = {
+                    'id': generate_uuid(),
+                    'title': chapter['title'],
+                    'order': 0,
+                    'content': chapter['description'],
+                    'images': chapter_node.get('images', [])
+                }
+                
+                desc_article = {
+                    'id': generate_uuid(),
+                    'title': chapter['title'],
+                    'vlp_order': 0,
+                    'position': current_position,
+                    'steps': [step]
+                }
+                
+                chapter['articles'].append(desc_article)
+                self.logger.processed_articles += 1
+                self.logger.processed_images += len(chapter_node.get('images', []))
+                current_position += 1
+            
+            # Process level 2 children as articles
+            if chapter_node.get('children'):
+                sorted_articles = sorted(chapter_node['children'], key=lambda x: x['order'])
+                
+                for article_node in sorted_articles:
+                    position = current_position
+                    current_position += 1
+                    
+                    self.logger.current_article += 1
+                    
+                    article_title = article_node['title']
+                    
+                    if not article_title:
+                        article_content = self._clean_html(article_node['content'])
+                        if "Copyright" in article_content:
+                            article_title = "Copyright"
+                        else:
+                            article_title = "Unknown Title"
+                    
+                    self.logger.progress(f"Processing article: {article_title}")
+                    
+                    article = {
+                        'id': article_node['id'],
+                        'title': article_title,
+                        'vlp_order': article_node['order'],
+                        'position': position,
+                        'steps': []
+                    }
+                    
+                    # If Article has content, create a step for it first
+                    article_content = self._clean_html(article_node['content'])
+                    if article_content:
+                        intro_step = {
+                            'id': generate_uuid(),
+                            'title': article['title'],
+                            'order': -1,
+                            'content': article_content,
+                            'images': article_node.get('images', [])
+                        }
+                        article['steps'].append(intro_step)
+                        self.logger.processed_images += len(article_node.get('images', []))
+                    
+                    # Process level 3 children as steps
+                    if article_node.get('children'):
+                        sorted_steps = sorted(article_node['children'], key=lambda x: x['order'])
+                        for step_node in sorted_steps:
+                            step = {
+                                'id': step_node['id'],
+                                'title': step_node['title'],
+                                'order': step_node['order'],
+                                'content': self._clean_html(step_node['content']),
+                                'images': step_node.get('images', [])
+                            }
+                            article['steps'].append(step)
+                            self.logger.processed_images += len(step_node.get('images', []))
+                    
+                    chapter['articles'].append(article)
+                    self.logger.processed_articles += 1
+            
+            chapters.append(chapter)
+        
+        return chapters
+    
+    def _clean_html(self, html: str) -> str:
+        """Clean up and convert Edu HTML to ScreenSteps-compatible HTML."""
+        if not html:
+            return ""
+        
+        # Parse and convert formatting
+        html = self._convert_edu_formatting(html)
+        
+        # Fix image paths - convert media/... to images/... for ScreenSteps
+        # Keep original paths for now; image copying will handle the actual path mapping
+        html = re.sub(r'src="media/', 'src="images/', html)
+        
+        return html.strip()
+    
+    def _convert_edu_formatting(self, html: str) -> str:
+        """Convert Edu format HTML to ScreenSteps-compatible format
+        
+        The Edu format uses standard HTML tags (b, code, kbd, var, strong, em)
+        which are already compatible with ScreenSteps. We just need to:
+        - Clean up empty paragraphs
+        - Normalize list structures
+        - Handle any inline styles
+        """
+        if not html:
+            return ""
+        
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Remove empty paragraphs (but keep those with just &nbsp; or images)
+            for p in soup.find_all('p'):
+                text = p.get_text(strip=True)
+                has_img = p.find('img')
+                if not text and not has_img:
+                    p.decompose()
+            
+            # Clean up nested p tags (sometimes occurs in CDATA)
+            for p in soup.find_all('p'):
+                for nested_p in p.find_all('p'):
+                    nested_p.unwrap()
+            
+            # Normalize ordered lists - remove start attributes
+            for ol_tag in soup.find_all('ol'):
+                if ol_tag.has_attr('start'):
+                    del ol_tag['start']
+            
+            # Convert var tags to em (ScreenSteps preference)
+            for var_tag in soup.find_all('var'):
+                var_tag.name = 'em'
+            
+            return str(soup)
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to parse Edu HTML for formatting: {e}")
+            return html
+
+
 class ScreenStepsConverter:
     """Converter from VLP to ScreenSteps format"""
     
@@ -930,53 +1273,86 @@ class ScreenStepsConverter:
         return article_count, image_count
 
 class VLPToScreenStepsConverter:
-    """Main converter class"""
+    """Main converter class - supports both VLP (content.xml) and Edu (To_Import.xml) formats"""
     
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
         self.logger = ProgressLogger(verbose)
-        self.parser = VLPParser(self.logger)
+        self.vlp_parser = VLPParser(self.logger)
+        self.edu_parser = EduManualParser(self.logger)
         self.converter = ScreenStepsConverter(self.logger)
+        # Keep backward compatibility
+        self.parser = self.vlp_parser
+    
+    def _detect_format(self, dir_path: Path) -> Tuple[str, Path]:
+        """Detect content format based on XML file presence
+        
+        Returns:
+            Tuple of (format_type, xml_path) where format_type is 'vlp' or 'edu'
+        """
+        # Check for VLP format first (content.xml)
+        vlp_xml = dir_path / "content.xml"
+        if vlp_xml.exists():
+            self.logger.info("Detected VLP format (content.xml)")
+            return ('vlp', vlp_xml)
+        
+        # Check for Edu format (To_Import.xml)
+        edu_xml = dir_path / "To_Import.xml"
+        if edu_xml.exists():
+            self.logger.info("Detected Edu format (To_Import.xml)")
+            return ('edu', edu_xml)
+        
+        # Neither found
+        raise FileNotFoundError(
+            f"No content.xml or To_Import.xml found in {dir_path}. "
+            "Expected VLP export with content.xml or Edu export with To_Import.xml."
+        )
     
     def convert_zip(self, zip_path: Path, output_dir: Path, 
                     cleanup: bool = True) -> Path:
-        """Convert a VLP ZIP export to ScreenSteps format"""
+        """Convert a VLP or Edu ZIP export to ScreenSteps format"""
         
-        self.logger.header("VLP to ScreenSteps Converter")
+        self.logger.header("Lab Manual to ScreenSteps Converter")
         self.logger.info(f"Input: {zip_path}")
         self.logger.info(f"Output: {output_dir}")
         
         # Step 1: Extract ZIP
-        self.logger.step(1, 5, "Extracting VLP ZIP file")
+        self.logger.step(1, 5, "Extracting ZIP file")
         temp_dir = self._extract_zip(zip_path)
         
-        # Step 2: Parse VLP XML
-        self.logger.step(2, 5, "Parsing VLP content")
-        xml_file = temp_dir / "content.xml"
-        if not xml_file.exists():
-            raise FileNotFoundError(f"content.xml not found in {temp_dir}")
+        # Step 2: Detect format and parse
+        self.logger.step(2, 5, "Detecting format and parsing content")
+        format_type, xml_file = self._detect_format(temp_dir)
         
-        vlp_data = self.parser.parse_xml(xml_file)
+        if format_type == 'vlp':
+            parser = self.vlp_parser
+            images_source = temp_dir / "images"
+        else:  # edu format
+            parser = self.edu_parser
+            images_source = temp_dir / "media"  # Edu uses 'media' folder
+        
+        manual_data = parser.parse_xml(xml_file)
         
         # Step 3: Flatten structure
         self.logger.step(3, 5, "Flattening content structure")
-        chapters = self.parser.flatten_structure(vlp_data)
+        chapters = parser.flatten_structure(manual_data)
         self.logger.substep(f"Created {len(chapters)} chapters")
         total_articles = sum(len(ch['articles']) for ch in chapters)
         self.logger.substep(f"Created {total_articles} articles")
         
         # Step 4: Convert to ScreenSteps format
         self.logger.step(4, 5, "Converting to ScreenSteps format")
-        manual = self.converter.convert(vlp_data, chapters, output_dir, 
-                                       temp_dir / "images")
+        manual = self.converter.convert(manual_data, chapters, output_dir, images_source)
         
         # Step 5: Write output
         self.logger.step(5, 5, "Writing output files")
-        output_path = output_dir / vlp_data['name']
+        output_path = output_dir / manual_data['name']
         output_path.mkdir(parents=True, exist_ok=True)
         
-        images_source = temp_dir / "images"
-        article_count, image_count = self.converter.write_output(manual, chapters, output_path, images_source)
+        if format_type == 'edu':
+            article_count, image_count = self._write_edu_output(manual, chapters, output_path, temp_dir)
+        else:
+            article_count, image_count = self.converter.write_output(manual, chapters, output_path, images_source)
         
         # Cleanup
         if cleanup:
@@ -991,39 +1367,45 @@ class VLPToScreenStepsConverter:
         return output_path
     
     def convert_directory(self, dir_path: Path, output_dir: Path) -> Path:
-        """Convert an extracted VLP directory to ScreenSteps format"""
+        """Convert an extracted VLP or Edu directory to ScreenSteps format"""
         
-        self.logger.header("VLP to ScreenSteps Converter")
+        self.logger.header("Lab Manual to ScreenSteps Converter")
         self.logger.info(f"Input: {dir_path}")
         self.logger.info(f"Output: {output_dir}")
         
-        # Parse VLP XML
-        self.logger.step(1, 4, "Parsing VLP content")
-        xml_file = dir_path / "content.xml"
-        if not xml_file.exists():
-            raise FileNotFoundError(f"content.xml not found in {dir_path}")
+        # Step 1: Detect format and parse
+        self.logger.step(1, 4, "Detecting format and parsing content")
+        format_type, xml_file = self._detect_format(dir_path)
         
-        vlp_data = self.parser.parse_xml(xml_file)
+        if format_type == 'vlp':
+            parser = self.vlp_parser
+            images_source = dir_path / "images"
+        else:  # edu format
+            parser = self.edu_parser
+            images_source = dir_path / "media"  # Edu uses 'media' folder
         
-        # Flatten structure
+        manual_data = parser.parse_xml(xml_file)
+        
+        # Step 2: Flatten structure
         self.logger.step(2, 4, "Flattening content structure")
-        chapters = self.parser.flatten_structure(vlp_data)
+        chapters = parser.flatten_structure(manual_data)
         self.logger.substep(f"Created {len(chapters)} chapters")
         total_articles = sum(len(ch['articles']) for ch in chapters)
         self.logger.substep(f"Created {total_articles} articles")
         
-        # Convert to ScreenSteps format
+        # Step 3: Convert to ScreenSteps format
         self.logger.step(3, 4, "Converting to ScreenSteps format")
-        manual = self.converter.convert(vlp_data, chapters, output_dir, 
-                                       dir_path / "images")
+        manual = self.converter.convert(manual_data, chapters, output_dir, images_source)
         
-        # Write output
+        # Step 4: Write output
         self.logger.step(4, 4, "Writing output files")
-        output_path = output_dir / vlp_data['name']
+        output_path = output_dir / manual_data['name']
         output_path.mkdir(parents=True, exist_ok=True)
         
-        images_source = dir_path / "images"
-        article_count, image_count = self.converter.write_output(manual, chapters, output_path, images_source)
+        if format_type == 'edu':
+            article_count, image_count = self._write_edu_output(manual, chapters, output_path, dir_path)
+        else:
+            article_count, image_count = self.converter.write_output(manual, chapters, output_path, images_source)
         
         self.logger.header("Conversion Complete!")
         self.logger.success(f"ScreenSteps content created at: {output_path}")
@@ -1031,6 +1413,73 @@ class VLPToScreenStepsConverter:
         self.logger.info(f"Log file: {self.logger.log_file}")
         
         return output_path
+    
+    def _write_edu_output(self, manual: Dict, chapters: List[Dict], 
+                          output_dir: Path, source_dir: Path) -> Tuple[int, int]:
+        """Write ScreenSteps output for Edu format with special image handling
+        
+        Edu format images are in nested paths like:
+        media/_VCF/VCF9/Stage 3/.../image.png
+        
+        We need to:
+        1. Find images by their original_path in the source directory
+        2. Copy them to flat images/<article_id>/ structure
+        """
+        self.logger.info("Writing ScreenSteps output files (Edu format)...")
+        
+        # Create directory structure
+        articles_dir = output_dir / "articles"
+        images_dir = output_dir / "images"
+        articles_dir.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write table of contents
+        toc_file = output_dir / f"{manual['manual']['id']}.json"
+        with open(toc_file, 'w', encoding='utf-8') as f:
+            json.dump(manual, f, indent=2, ensure_ascii=False)
+        self.logger.substep(f"Created TOC: {toc_file.name}")
+        
+        # Write individual articles and copy images
+        article_count = 0
+        image_count = 0
+        
+        for chapter in manual['manual']['chapters']:
+            for article in chapter['articles']:
+                article_id = article['id']
+                
+                # Write article JSON
+                article_file = articles_dir / f"{article_id}.json"
+                with open(article_file, 'w', encoding='utf-8') as f:
+                    json.dump(article, f, indent=2, ensure_ascii=False)
+                
+                # Copy article images from steps
+                article_images_dir = images_dir / article_id
+                article_images_dir.mkdir(exist_ok=True)
+                
+                for step in article.get('steps', []):
+                    for img_info in step.get('images', []):
+                        # For Edu format, use original_path if available
+                        original_path = img_info.get('original_path', img_info.get('src', ''))
+                        
+                        if original_path:
+                            # Construct source path
+                            src_image = source_dir / original_path
+                            
+                            if src_image.exists():
+                                # Copy to flat structure with just the filename
+                                dst_image = article_images_dir / img_info['filename']
+                                shutil.copy2(src_image, dst_image)
+                                image_count += 1
+                                self.logger.substep(f"Copied image: {img_info['filename']}")
+                            else:
+                                self.logger.warning(f"Image not found: {src_image}")
+                
+                article_count += 1
+        
+        self.logger.substep(f"Created {article_count} article files with {image_count} images")
+        self.logger.success(f"Output written to: {output_dir}")
+        
+        return article_count, image_count
     
     def _extract_zip(self, zip_path: Path) -> Path:
         """Extract ZIP file to temporary directory"""
@@ -1043,15 +1492,16 @@ class VLPToScreenStepsConverter:
             zip_ref.extractall(temp_dir)
         
         # Find the actual content directory (may be nested)
-        content_xml = None
+        # Look for either content.xml (VLP format) or To_Import.xml (Edu format)
+        content_dir = None
         for root, dirs, files in os.walk(temp_dir):
-            if 'content.xml' in files:
-                content_xml = Path(root)
+            if 'content.xml' in files or 'To_Import.xml' in files:
+                content_dir = Path(root)
                 break
         
-        if content_xml and content_xml != temp_dir:
+        if content_dir and content_dir != temp_dir:
             # Move contents up if nested
-            for item in content_xml.iterdir():
+            for item in content_dir.iterdir():
                 shutil.move(str(item), str(temp_dir / item.name))
         
         self.logger.substep(f"Extracted {len(list(temp_dir.rglob('*')))} files")
