@@ -84,7 +84,6 @@ dmypy.json
 *.so
 *.dylib
 vlp2ss
-vlp2ss-*
 
 # Test binary, built with `go test -c`
 *.test
